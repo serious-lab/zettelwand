@@ -1,0 +1,1046 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Zettelwand">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="theme-color" content="#2F6B4F">
+<meta name="description" content="Haftnotizen sammeln, abfotografieren und ordnen – offline auf dem iPad.">
+<title>Zettelwand</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="icon" type="image/png" href="icons/icon-192.png">
+<style>
+:root{
+  /* Layout: full-screen pannable board, slim toolbar on top, floating zoom dock bottom-right */
+  --bg:#E8EBE4; --dot:#C3C9BC; --chrome:#FBFCFA; --ink:#1F2421; --muted:#636B65; --line:#D5DAD0;
+  --accent:#2F6B4F; --accent-ink:#FFFFFF; --danger:#B3261E;
+  --font-ui:-apple-system, BlinkMacSystemFont, system-ui, "Segoe UI", Roboto, sans-serif;
+  --font-note:"Noteworthy", "Marker Felt", "Bradley Hand", "Segoe Print", "Comic Sans MS", cursive;
+  --shadow:0 1px 2px rgba(20,30,20,.18), 0 6px 14px rgba(20,30,20,.10);
+  color-scheme:light;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#191D1B; --dot:#2E3531; --chrome:#222725; --ink:#E7ECE8; --muted:#9AA39D; --line:#353C38;
+    --accent:#7CC4A0; --accent-ink:#0F1A14; --danger:#F2867E;
+    --shadow:0 1px 2px rgba(0,0,0,.5), 0 8px 18px rgba(0,0,0,.35);
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#191D1B; --dot:#2E3531; --chrome:#222725; --ink:#E7ECE8; --muted:#9AA39D; --line:#353C38;
+  --accent:#7CC4A0; --accent-ink:#0F1A14; --danger:#F2867E;
+  --shadow:0 1px 2px rgba(0,0,0,.5), 0 8px 18px rgba(0,0,0,.35);
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--ink);font-family:var(--font-ui);overflow:hidden;display:flex;flex-direction:column;
+  -webkit-tap-highlight-color:transparent;-webkit-user-select:none;user-select:none;-webkit-text-size-adjust:100%}
+input,textarea{-webkit-user-select:text;user-select:text}
+button{font-family:inherit}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+.bar{display:flex;align-items:center;gap:8px;flex:none;z-index:5;background:var(--chrome);border-bottom:1px solid var(--line);
+  padding:calc(8px + env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) 8px max(12px, env(safe-area-inset-left))}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;height:38px;padding:0 12px;border-radius:10px;border:1px solid var(--line);
+  background:var(--chrome);color:var(--ink);font:600 14px/1 var(--font-ui);cursor:pointer;white-space:nowrap}
+.btn:hover{border-color:var(--muted)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+.btn.danger{color:var(--danger)}
+.btn svg{width:18px;height:18px;flex:none}
+.btn[disabled]{opacity:.45;cursor:default}
+.board-btn{border-color:transparent;background:transparent;font-size:16px;font-weight:700;padding:0 8px;max-width:34vw}
+.board-btn span{overflow:hidden;text-overflow:ellipsis}
+.search{flex:1 1 140px;min-width:70px;max-width:260px;height:38px;border-radius:10px;border:1px solid var(--line);background:var(--bg);
+  color:var(--ink);padding:0 12px;font:15px var(--font-ui)}
+.spacer{flex:1}
+.status{font:500 12px/1 var(--font-ui);color:var(--muted);padding:7px 10px;border-radius:999px;border:1px solid var(--line);background:transparent;cursor:pointer;white-space:nowrap}
+.status[data-s="saved"]::before{content:"";display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--accent);margin-right:6px;vertical-align:1px}
+.status[data-s="error"],.status[data-s="toolarge"],.status[data-s="unsaved"]{color:var(--danger);border-color:currentColor}
+@media (max-width:900px){ .btn .lbl{display:none} .btn{padding:0 10px} .status .long{display:none} }
+
+#board{position:relative;flex:1;overflow:hidden;touch-action:none;background-color:var(--bg);
+  background-image:radial-gradient(var(--dot) 1.3px, transparent 1.5px)}
+#world{position:absolute;left:0;top:0;transform-origin:0 0}
+.note{position:absolute;width:180px;height:180px;border-radius:2px;overflow:hidden;box-shadow:var(--shadow);cursor:grab;color:#1D1D1F;
+  -webkit-touch-callout:none;transition:opacity .2s, box-shadow .15s}
+.note.dragging{cursor:grabbing;box-shadow:0 14px 30px rgba(0,0,0,.28)}
+.note img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;pointer-events:none}
+.note .txt{position:absolute;inset:0;padding:14px;display:flex;align-items:center;justify-content:center;text-align:center;pointer-events:none;
+  font-family:var(--font-note);line-height:1.15;white-space:pre-wrap;overflow-wrap:anywhere;overflow:hidden}
+.note .ink,.ed-note .ink{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;fill:none;stroke-linecap:round;stroke-linejoin:round}
+.note.dim{opacity:.2}
+.note.hit{box-shadow:0 0 0 4px var(--accent), var(--shadow)}
+#world.animate .note{transition:left .35s ease, top .35s ease}
+@media (prefers-reduced-motion: reduce){ #world.animate .note{transition:none} }
+
+.dock{position:absolute;right:max(14px, env(safe-area-inset-right));bottom:max(14px, env(safe-area-inset-bottom));display:flex;gap:2px;
+  background:var(--chrome);border:1px solid var(--line);border-radius:12px;padding:4px;box-shadow:var(--shadow)}
+.dock button{min-width:38px;height:36px;border:0;background:transparent;color:var(--ink);border-radius:8px;font:600 18px/1 var(--font-ui);cursor:pointer}
+.dock button:hover{background:var(--bg)}
+.dock .zoom{min-width:58px;font-size:13px;font-variant-numeric:tabular-nums}
+.dock .fit{font-size:13px;padding:0 10px}
+.empty{position:absolute;inset:0;display:grid;place-items:center;pointer-events:none;padding:20px}
+.empty[hidden]{display:none}
+.empty p{max-width:360px;margin:0;text-align:center;color:var(--muted);background:var(--chrome);padding:18px 22px;border-radius:14px;border:1px dashed var(--line);line-height:1.5}
+
+.modal{position:fixed;inset:0;background:rgba(10,15,12,.45);display:flex;align-items:center;justify-content:center;z-index:20;
+  padding:max(16px, env(safe-area-inset-top)) 16px max(16px, env(safe-area-inset-bottom))}
+.modal[hidden]{display:none}
+.sheet{background:var(--chrome);color:var(--ink);border-radius:18px;box-shadow:0 20px 60px rgba(0,0,0,.35);max-height:100%;overflow:auto;
+  width:min(560px,100%);padding:16px;display:flex;flex-direction:column;gap:14px}
+.sheet h2{margin:0;font-size:18px;text-wrap:balance}
+.sheet p{margin:0;color:var(--muted);line-height:1.45;font-size:14px}
+.row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.lbl-s{font-size:13px;font-weight:600;color:var(--muted);min-width:44px}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:10px;padding:2px;gap:2px;background:var(--bg)}
+.seg button{border:0;background:transparent;color:var(--ink);height:32px;padding:0 12px;border-radius:8px;font:600 13px/1 var(--font-ui);cursor:pointer}
+.seg button[aria-pressed="true"]{background:var(--chrome);box-shadow:0 1px 2px rgba(0,0,0,.15)}
+.swatches{display:flex;gap:8px;flex-wrap:wrap}
+.sw{width:34px;height:34px;border-radius:50%;border:2px solid rgba(0,0,0,.12);cursor:pointer;padding:0}
+.sw.small{width:28px;height:28px}
+.sw[aria-pressed="true"]{box-shadow:0 0 0 3px var(--chrome), 0 0 0 5px var(--accent)}
+
+.ed-stage{display:flex;justify-content:center}
+.ed-note{position:relative;width:var(--d);height:var(--d);border-radius:2px;overflow:hidden;box-shadow:var(--shadow);color:#1D1D1F;flex:none}
+.ed-note img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+#edText{position:absolute;inset:0;width:100%;height:100%;border:0;background:transparent;resize:none;text-align:center;color:#1D1D1F;
+  font-family:var(--font-note);line-height:1.15;outline:none}
+#edText::placeholder{color:rgba(0,0,0,.35)}
+#edCanvas{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;touch-action:none}
+.ed-note[data-mode="pen"] #edCanvas,.ed-note[data-mode="erase"] #edCanvas{pointer-events:auto;cursor:crosshair}
+.ed-note[data-mode="pen"] #edText,.ed-note[data-mode="erase"] #edText{pointer-events:none}
+#edCaption{width:100%;min-height:64px;border:1px solid var(--line);border-radius:10px;background:var(--bg);color:var(--ink);padding:10px;font:15px/1.4 var(--font-ui);resize:vertical}
+.ed-head{display:flex;justify-content:space-between;align-items:center;gap:10px}
+.ed-actions{display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap}
+.check{display:flex;align-items:center;gap:8px;font-size:14px;cursor:pointer}
+.check input{width:20px;height:20px;accent-color:var(--accent)}
+
+.capture-sheet{width:min(920px,100%)}
+.cap-stage{display:flex;justify-content:center;background:var(--bg);border-radius:12px;padding:10px}
+.cap-wrap{position:relative;display:inline-block;max-width:100%;line-height:0}
+.cap-wrap img{display:block;max-width:100%;max-height:56vh;border-radius:6px}
+.box{position:absolute;border:3px solid #FFFFFF;outline:3px solid var(--accent);border-radius:4px;cursor:pointer;background:rgba(47,107,79,.14);padding:0}
+.box.off{outline-color:var(--danger);outline-style:dashed;background:rgba(0,0,0,.35)}
+.box b{position:absolute;left:-3px;top:-3px;background:var(--accent);color:var(--accent-ink);font:700 12px/1 var(--font-ui);padding:4px 6px;border-radius:0 0 6px 0}
+.box.off b{background:var(--danger);color:#fff}
+.cap-foot{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+
+.drawer ul{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px}
+.drawer li{display:flex;align-items:center;gap:6px;border:1px solid var(--line);border-radius:12px;padding:6px}
+.drawer li.cur{border-color:var(--accent)}
+.drawer .open{flex:1;text-align:left;border:0;background:transparent;color:var(--ink);font:600 15px/1.2 var(--font-ui);padding:8px;cursor:pointer;min-width:0}
+.drawer .open small{display:block;font-weight:400;color:var(--muted);font-size:12px;margin-top:3px}
+.drawer input{flex:1;height:36px;border:1px solid var(--accent);border-radius:8px;padding:0 10px;font:15px var(--font-ui);background:var(--bg);color:var(--ink)}
+.icon-btn{width:36px;height:36px;border:0;border-radius:8px;background:transparent;color:var(--muted);cursor:pointer;display:grid;place-items:center}
+.icon-btn:hover{background:var(--bg);color:var(--ink)}
+.icon-btn svg{width:18px;height:18px}
+
+.menu{position:fixed;z-index:30;background:var(--chrome);border:1px solid var(--line);border-radius:12px;box-shadow:0 12px 34px rgba(0,0,0,.22);padding:6px;display:flex;flex-direction:column;min-width:230px}
+.menu button{border:0;background:transparent;color:var(--ink);text-align:left;padding:11px 12px;border-radius:8px;font:500 15px/1.2 var(--font-ui);cursor:pointer}
+.menu button:hover{background:var(--bg)}
+.menu small{display:block;color:var(--muted);font-size:12px;margin-top:2px}
+
+.toast{position:fixed;left:50%;bottom:max(20px, env(safe-area-inset-bottom));transform:translateX(-50%);z-index:40;display:flex;align-items:center;gap:12px;
+  background:var(--ink);color:var(--chrome);padding:10px 14px;border-radius:12px;box-shadow:0 10px 30px rgba(0,0,0,.3);font-size:14px;max-width:calc(100% - 32px)}
+.toast[hidden]{display:none}
+.toast button{border:0;background:transparent;color:var(--accent);font:700 14px var(--font-ui);cursor:pointer;padding:4px}
+:root:not([data-theme="dark"]) .toast button{color:#9BE0BC}
+.spin{width:16px;height:16px;border-radius:50%;border:2px solid currentColor;border-right-color:transparent;animation:sp 0.8s linear infinite;flex:none}
+@keyframes sp{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion: reduce){ .spin{animation-duration:2.4s} }
+.preview-img{max-width:100%;max-height:60vh;border-radius:8px;display:block;margin:0 auto;-webkit-touch-callout:default;-webkit-user-select:auto;user-select:auto}
+</style>
+</head>
+<body>
+<header class="bar">
+  <button class="btn board-btn" id="boardBtn" aria-label="Boards anzeigen">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+    <span id="boardName">Board</span>
+  </button>
+  <input class="search" id="search" type="search" placeholder="Notizen durchsuchen" aria-label="Notizen durchsuchen" autocomplete="off">
+  <div class="spacer"></div>
+  <button class="btn primary" id="addBtn" aria-label="Neue Notiz">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg><span class="lbl">Notiz</span>
+  </button>
+  <button class="btn" id="capBtn" aria-label="Post-its fotografieren">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg><span class="lbl">Erfassen</span>
+  </button>
+  <button class="btn" id="arrBtn" aria-label="Ordnen">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="6" height="6"/><rect x="14" y="4" width="6" height="6"/><rect x="4" y="14" width="6" height="6"/><rect x="14" y="14" width="6" height="6"/></svg><span class="lbl">Ordnen</span>
+  </button>
+  <button class="btn" id="expBtn" aria-label="Exportieren">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg><span class="lbl">Export</span>
+  </button>
+  <button class="status" id="status" data-s="saved">Gespeichert</button>
+  <input type="file" id="capFile" accept="image/*" hidden>
+  <input type="file" id="jsonFile" accept=".json,application/json" hidden>
+</header>
+
+<main id="board" aria-label="Zettelwand">
+  <div id="world"></div>
+  <div class="empty" id="empty" hidden><p>Noch keine Notizen auf diesem Board. Lege mit „Notiz“ los oder fotografiere echte Post-its mit „Erfassen“.</p></div>
+  <div class="dock">
+    <button id="zoomOut" aria-label="Verkleinern">−</button>
+    <button class="zoom" id="zoomLbl" aria-label="Zoom auf 100 % setzen">100 %</button>
+    <button id="zoomIn" aria-label="Vergrößern">+</button>
+    <button class="fit" id="fitBtn">Alles zeigen</button>
+  </div>
+</main>
+
+<div class="modal" id="editor" hidden>
+  <div class="sheet" role="dialog" aria-modal="true" aria-label="Notiz bearbeiten">
+    <div class="ed-head">
+      <div class="seg" id="modeSeg">
+        <button data-mode="text" aria-pressed="true">Text</button>
+        <button data-mode="pen" aria-pressed="false">Stift</button>
+        <button data-mode="erase" aria-pressed="false">Radierer</button>
+      </div>
+      <button class="btn primary" id="edDone">Fertig</button>
+    </div>
+    <div class="ed-stage">
+      <div class="ed-note" id="edNote" data-mode="text">
+        <img id="edImg" alt="Foto der Notiz" hidden>
+        <textarea id="edText" placeholder="Idee notieren …" aria-label="Text der Notiz"></textarea>
+        <canvas id="edCanvas" aria-label="Zeichenfläche"></canvas>
+      </div>
+    </div>
+    <div class="row"><span class="lbl-s">Zettel</span><div class="swatches" id="edColors"></div></div>
+    <div class="row" id="penRow"><span class="lbl-s">Stift</span><div class="swatches" id="inkColors"></div>
+      <div class="seg" id="penSize"><button data-w="6" aria-pressed="false">Fein</button><button data-w="12" aria-pressed="true">Mittel</button><button data-w="22" aria-pressed="false">Dick</button></div>
+      <button class="btn" id="edUndo">Rückgängig</button>
+    </div>
+    <div id="imgRow" hidden>
+      <label class="check" style="margin-bottom:10px"><input type="checkbox" id="edAsText"> Text statt Foto auf dem Zettel zeigen</label>
+      <textarea id="edCaption" placeholder="Text zur Notiz, für Suche und Export" aria-label="Text zur Notiz"></textarea>
+      <div class="row" style="margin-top:8px"><button class="btn" id="edOcr" hidden>Handschrift erkennen</button></div>
+    </div>
+    <div class="ed-actions">
+      <button class="btn" id="edDup">Duplizieren</button>
+      <button class="btn danger" id="edDel">Löschen</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal" id="capture" hidden>
+  <div class="sheet capture-sheet" role="dialog" aria-modal="true" aria-labelledby="capTitle">
+    <div><h2 id="capTitle">Erkannte Zettel</h2><p id="capInfo"></p></div>
+    <div class="cap-stage"><div class="cap-wrap" id="capWrap"><img id="capImg" alt="Aufgenommenes Foto"><div id="capBoxes"></div></div></div>
+    <div class="cap-foot">
+      <label class="check" id="ocrLabel" hidden><input type="checkbox" id="ocrToggle" checked> Handschrift in Text umwandeln (auf dem Gerät)</label>
+      <div class="spacer"></div>
+      <button class="btn" id="capCancel">Abbrechen</button>
+      <button class="btn primary" id="capOk">Übernehmen</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal" id="drawer" hidden>
+  <div class="sheet drawer" role="dialog" aria-modal="true" aria-labelledby="drTitle">
+    <div class="ed-head"><h2 id="drTitle">Boards</h2><button class="btn" id="drClose">Schließen</button></div>
+    <ul id="boardList"></ul>
+    <button class="btn primary" id="newBoard">Neues Board</button>
+  </div>
+</div>
+
+<div class="modal" id="confirm" hidden>
+  <div class="sheet" role="alertdialog" aria-modal="true" aria-labelledby="cfText" style="width:min(400px,100%)">
+    <h2 id="cfText"></h2><p id="cfSub"></p>
+    <div class="ed-actions"><button class="btn" id="cfNo">Abbrechen</button><button class="btn primary" id="cfYes">OK</button></div>
+  </div>
+</div>
+
+<div class="modal" id="preview" hidden>
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="pvTitle" style="width:min(820px,100%)">
+    <div class="ed-head"><h2 id="pvTitle">Board als Bild</h2><button class="btn" id="pvClose">Schließen</button></div>
+    <p>Halte den Finger auf dem Bild gedrückt und wähle „In Fotos sichern“ oder „Teilen“.</p>
+    <img class="preview-img" id="pvImg" alt="Board als Bild">
+  </div>
+</div>
+
+<div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+
+<script>
+(() => {
+'use strict';
+const $ = s => document.querySelector(s);
+const PALETTE = [
+  {id:'y', name:'Gelb',   bg:'#FFEF7A', hue:54},
+  {id:'o', name:'Orange', bg:'#FFC170', hue:30},
+  {id:'p', name:'Pink',   bg:'#FF9EC4', hue:335},
+  {id:'g', name:'Grün',   bg:'#BDE88A', hue:92},
+  {id:'b', name:'Blau',   bg:'#8FD8F2', hue:195},
+  {id:'v', name:'Lila',   bg:'#CDB4F6', hue:268},
+];
+const INK = ['#1D1D1F', '#1F4FBF', '#C62828', '#2E7D32'];
+const S = 180, GAP = 24, LS = 'zettelwand.v1';
+const uid = () => Math.random().toString(36).slice(2, 8) + Date.now().toString(36).slice(-5);
+const col = id => PALETTE.find(p => p.id === id) || PALETTE[0];
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+let state = null, view = {x: 0, y: 0, k: 1}, search = '', lastColor = 'y';
+/* Plattform: Browser (GitHub Pages) oder native App (Capacitor) */
+const Cap = window.Capacitor;
+const NATIVE = !!(Cap && typeof Cap.isNativePlatform === 'function' && Cap.isNativePlatform());
+/* Native Plugins ohne Bundler ansprechen: registerPlugin, sonst direkt über die Bridge */
+const plug = (name, methods) => {
+  if (!NATIVE) return null;
+  if (typeof Cap.registerPlugin === 'function') return Cap.registerPlugin(name);
+  const o = {};
+  for (const m of methods) o[m] = opts => typeof Cap.nativePromise === 'function'
+    ? Cap.nativePromise(name, m, opts)
+    : Cap.Plugins[name][m](opts);
+  return o;
+};
+const VisionOCR = plug('VisionOCR', ['recognize']), FS = plug('Filesystem', ['writeFile']), Share = plug('Share', ['share']);
+let ocrOK = !!VisionOCR, saveTimer = null;
+
+const boardEl = $('#board'), world = $('#world');
+
+/* ---------- data ---------- */
+function sampleState() {
+  const n = (x, y, c, t, ink) => ({id: uid(), x, y, c, t, ink: ink || []});
+  const id = uid();
+  return {v: 1, savedAt: 0, current: id, boards: [{id, name: 'Beispiel-Board', notes: [
+    n(0, 0, 'y', 'Willkommen auf deiner Zettelwand!'),
+    n(210, -12, 'y', 'Tippe auf eine Notiz, um sie zu bearbeiten'),
+    n(420, 8, 'p', 'Mit dem Apple Pencil direkt auf den Zettel schreiben', [{c:'#C62828', w:14, p:[150,862,300,836,450,866,600,836,750,862,860,842]}]),
+    n(-6, 214, 'g', '„Erfassen“: echte Post-its fotografieren und einzeln übernehmen'),
+    n(206, 204, 'b', 'Ziehen verschiebt, zwei Finger zoomen'),
+    n(424, 222, 'o', '„Ordnen“ sortiert nach Farbe oder im Raster'),
+    n(4, 430, 'v', 'Speichert automatisch auf diesem Gerät'),
+    n(214, 420, 'b', 'Export als Bild, CSV oder Sicherung', [{c:'#1F4FBF', w:18, p:[740,130,790,190,890,70]}]),
+  ]}]};
+}
+const board = () => state.boards.find(b => b.id === state.current) || state.boards[0];
+const findNote = id => board().notes.find(n => n.id === id);
+
+const IDB = {
+  db: null,
+  open() {
+    return new Promise((res, rej) => {
+      const r = indexedDB.open('zettelwand', 1);
+      r.onupgradeneeded = () => r.result.createObjectStore('kv');
+      r.onsuccess = () => res(this.db = r.result);
+      r.onerror = () => rej(r.error);
+    });
+  },
+  async get(k) {
+    const db = this.db || await this.open();
+    return new Promise((res, rej) => { const q = db.transaction('kv').objectStore('kv').get(k); q.onsuccess = () => res(q.result); q.onerror = () => rej(q.error); });
+  },
+  async set(k, v) {
+    const db = this.db || await this.open();
+    return new Promise((res, rej) => { const tx = db.transaction('kv', 'readwrite'); tx.objectStore('kv').put(v, k); tx.oncomplete = () => res(); tx.onerror = () => rej(tx.error); });
+  }
+};
+async function load() {
+  let s = null;
+  const withTimeout = (pr, ms) => Promise.race([pr, new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), ms))]);
+  try { s = await withTimeout(IDB.get('state'), 2500); } catch (e) {}
+  if (!s) { try { const t = localStorage.getItem(LS); if (t) s = JSON.parse(t); } catch (e) {} }
+  if (!s || !Array.isArray(s.boards) || !s.boards.length) s = sampleState();
+  state = s;
+  if (!state.boards.some(b => b.id === state.current)) state.current = state.boards[0].id;
+  try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist(); } catch (e) {}
+}
+
+/* ---------- saving (lokal auf dem Gerät) ---------- */
+const STATUS = {saved: 'Gespeichert', pending: 'Speichert …', error: 'Speichern fehlgeschlagen'};
+function setStatus(s) { const el = $('#status'); el.dataset.s = s; el.textContent = STATUS[s] || s; }
+async function saveNow() {
+  clearTimeout(saveTimer); saveTimer = null;
+  try { await IDB.set('state', state); setStatus('saved'); }
+  catch (e) {
+    try { localStorage.setItem(LS, JSON.stringify(state)); setStatus('saved'); }
+    catch (e2) { setStatus('error'); toast('Speichern fehlgeschlagen. Ist der Gerätespeicher voll? Sichere das Board über Export.'); }
+  }
+}
+function stash() { clearTimeout(saveTimer); saveTimer = setTimeout(saveNow, 800); }
+function changed() { state.savedAt = Date.now(); setStatus('pending'); clearTimeout(saveTimer); saveTimer = setTimeout(saveNow, 400); }
+const flush = () => { if (saveTimer) saveNow(); };
+document.addEventListener('visibilitychange', () => { if (document.hidden) flush(); });
+window.addEventListener('pagehide', flush);
+const fmtDate = t => new Date(t).toLocaleDateString('de-DE', {day: 'numeric', month: 'long', year: 'numeric'});
+$('#status').onclick = () => {
+  const lb = state.lastBackup ? fmtDate(state.lastBackup) : 'noch keine';
+  toast(`Alles liegt nur auf diesem Gerät. Letzte Sicherung: ${lb}.`, {label: 'Jetzt sichern', run: backupAll});
+};
+
+/* ---------- rendering ---------- */
+function fs(t) { const l = (t || '').length; return l <= 12 ? 34 : l <= 30 ? 27 : l <= 60 ? 22 : l <= 110 ? 18 : 15; }
+function pathD(p) {
+  if (!p || p.length < 2) return '';
+  let d = `M${p[0]} ${p[1]}`;
+  if (p.length === 2) return d + ` L${p[0] + 0.5} ${p[1]}`;
+  for (let i = 2; i < p.length - 2; i += 2) {
+    const mx = (p[i] + p[i + 2]) / 2, my = (p[i + 1] + p[i + 3]) / 2;
+    d += ` Q${p[i]} ${p[i + 1]} ${mx} ${my}`;
+  }
+  return d + ` L${p[p.length - 2]} ${p[p.length - 1]}`;
+}
+const inkSVG = ink => `<svg class="ink" viewBox="0 0 1000 1000" aria-hidden="true">${ink.map(s => `<path d="${pathD(s.p)}" stroke="${esc(s.c)}" stroke-width="${+s.w || 10}"/>`).join('')}</svg>`;
+const matches = n => !search || (n.t || '').toLowerCase().includes(search);
+
+function noteEl(n) {
+  const el = document.createElement('div');
+  el.className = 'note'; el.dataset.id = n.id;
+  el.style.left = n.x + 'px'; el.style.top = n.y + 'px'; el.style.background = col(n.c).bg;
+  if (!matches(n)) el.classList.add('dim'); else if (search) el.classList.add('hit');
+  if (n.img && !n.asText) {
+    const im = new Image(); im.src = n.img; im.alt = n.t || 'Erfasste Notiz'; im.draggable = false; el.appendChild(im);
+  } else if (n.t) {
+    const t = document.createElement('div'); t.className = 'txt'; t.textContent = n.t; t.style.fontSize = fs(n.t) + 'px'; el.appendChild(t);
+  }
+  if (n.ink && n.ink.length) el.insertAdjacentHTML('beforeend', inkSVG(n.ink));
+  el.setAttribute('role', 'button'); el.setAttribute('aria-label', n.t ? 'Notiz: ' + n.t : 'Notiz ohne Text');
+  return el;
+}
+function render() {
+  const b = board();
+  world.replaceChildren(...b.notes.map(noteEl));
+  $('#boardName').textContent = b.name;
+  $('#empty').hidden = b.notes.length > 0;
+  applyView();
+}
+function updateDim() {
+  for (const el of world.children) {
+    const n = findNote(el.dataset.id); if (!n) continue;
+    const m = matches(n);
+    el.classList.toggle('dim', !m); el.classList.toggle('hit', m && !!search);
+  }
+}
+function applyView() {
+  world.style.transform = `translate(${view.x}px, ${view.y}px) scale(${view.k})`;
+  const g = 24 * view.k;
+  boardEl.style.backgroundSize = `${g}px ${g}px`;
+  boardEl.style.backgroundPosition = `${view.x}px ${view.y}px`;
+  $('#zoomLbl').textContent = Math.round(view.k * 100) + ' %';
+}
+function rememberView() { board().view = {...view}; stash(); }
+function bounds(ns) {
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const n of ns) { x0 = Math.min(x0, n.x); y0 = Math.min(y0, n.y); x1 = Math.max(x1, n.x + S); y1 = Math.max(y1, n.y + S); }
+  return {x0, y0, x1, y1, w: x1 - x0, h: y1 - y0};
+}
+function fitView() {
+  const b = board(), r = boardEl.getBoundingClientRect();
+  if (!b.notes.length) { view = {x: r.width / 2 - S / 2, y: r.height / 2 - S / 2, k: 1}; applyView(); return; }
+  const bb = bounds(b.notes), m = 48;
+  const k = clamp(Math.min((r.width - m * 2) / bb.w, (r.height - m * 2 - 50) / bb.h), 0.15, 1.3);
+  view = {k, x: (r.width - bb.w * k) / 2 - bb.x0 * k, y: (r.height - 50 - bb.h * k) / 2 - bb.y0 * k};
+  applyView(); rememberView();
+}
+function zoomAt(px, py, f) {
+  const k2 = clamp(view.k * f, 0.15, 3);
+  const wx = (px - view.x) / view.k, wy = (py - view.y) / view.k;
+  view = {k: k2, x: px - wx * k2, y: py - wy * k2}; applyView();
+}
+function viewCenter() {
+  const r = boardEl.getBoundingClientRect();
+  return {x: (r.width / 2 - view.x) / view.k, y: (r.height / 2 - view.y) / view.k};
+}
+$('#zoomIn').onclick = () => { const r = boardEl.getBoundingClientRect(); zoomAt(r.width / 2, r.height / 2, 1.25); rememberView(); };
+$('#zoomOut').onclick = () => { const r = boardEl.getBoundingClientRect(); zoomAt(r.width / 2, r.height / 2, 0.8); rememberView(); };
+$('#zoomLbl').onclick = () => { const r = boardEl.getBoundingClientRect(); zoomAt(r.width / 2, r.height / 2, 1 / view.k); rememberView(); };
+$('#fitBtn').onclick = fitView;
+$('#search').addEventListener('input', e => { search = e.target.value.trim().toLowerCase(); updateDim(); });
+
+/* ---------- board gestures ---------- */
+const ptrs = new Map(); let gesture = null;
+const rel = p => { const r = boardEl.getBoundingClientRect(); return {x: p.x - r.left, y: p.y - r.top}; };
+function startPinch() {
+  const [a, b] = [...ptrs.values()].map(rel);
+  gesture = {type: 'pinch', d0: Math.hypot(a.x - b.x, a.y - b.y) || 1, c0: {x: (a.x + b.x) / 2, y: (a.y + b.y) / 2}, k0: view.k, x0: view.x, y0: view.y};
+}
+boardEl.addEventListener('pointerdown', e => {
+  if (e.button > 0 || e.target.closest('.dock')) return;
+  ptrs.set(e.pointerId, {x: e.clientX, y: e.clientY});
+  try { boardEl.setPointerCapture(e.pointerId); } catch (_) {}
+  if (ptrs.size === 1) {
+    const ne = e.target.closest('.note');
+    gesture = {type: ne ? 'note' : 'pan', sx: e.clientX, sy: e.clientY, t: Date.now(), moved: false, vx: view.x, vy: view.y};
+    if (ne) { const n = findNote(ne.dataset.id); Object.assign(gesture, {id: n.id, nx: n.x, ny: n.y, el: ne}); }
+  } else if (ptrs.size === 2) {
+    if (gesture && gesture.type === 'note') {
+      gesture.el.classList.remove('dragging');
+      if (gesture.moved) changed();
+    }
+    startPinch();
+  }
+});
+boardEl.addEventListener('pointermove', e => {
+  if (!ptrs.has(e.pointerId) || !gesture) return;
+  ptrs.set(e.pointerId, {x: e.clientX, y: e.clientY});
+  if (gesture.type === 'pinch' && ptrs.size >= 2) {
+    const [a, b] = [...ptrs.values()].map(rel);
+    const d = Math.hypot(a.x - b.x, a.y - b.y), c = {x: (a.x + b.x) / 2, y: (a.y + b.y) / 2};
+    const k = clamp(gesture.k0 * d / gesture.d0, 0.15, 3);
+    const wx = (gesture.c0.x - gesture.x0) / gesture.k0, wy = (gesture.c0.y - gesture.y0) / gesture.k0;
+    view = {k, x: c.x - wx * k, y: c.y - wy * k}; applyView();
+    return;
+  }
+  const dx = e.clientX - gesture.sx, dy = e.clientY - gesture.sy;
+  if (!gesture.moved && Math.hypot(dx, dy) < 7) return;
+  if (gesture.type === 'note') {
+    const b = board(), n = findNote(gesture.id); if (!n) return;
+    if (!gesture.moved) {
+      gesture.moved = true; gesture.el.classList.add('dragging');
+      b.notes.splice(b.notes.indexOf(n), 1); b.notes.push(n); world.appendChild(gesture.el);
+    }
+    n.x = Math.round(gesture.nx + dx / view.k); n.y = Math.round(gesture.ny + dy / view.k);
+    gesture.el.style.left = n.x + 'px'; gesture.el.style.top = n.y + 'px';
+  } else if (gesture.type === 'pan') {
+    gesture.moved = true;
+    view.x = gesture.vx + dx; view.y = gesture.vy + dy; applyView();
+  }
+});
+function endPointer(e) {
+  if (!ptrs.has(e.pointerId)) return;
+  ptrs.delete(e.pointerId);
+  if (!gesture) return;
+  if (gesture.type === 'pinch') {
+    if (ptrs.size === 1) {
+      const p = [...ptrs.values()][0];
+      gesture = {type: 'pan', sx: p.x, sy: p.y, vx: view.x, vy: view.y, moved: true};
+    } else if (ptrs.size === 0) { gesture = null; rememberView(); }
+    return;
+  }
+  if (ptrs.size > 0) return;
+  const g = gesture; gesture = null;
+  if (g.type === 'note') {
+    g.el.classList.remove('dragging');
+    if (g.moved) changed();
+    else if (e.type === 'pointerup' && Date.now() - g.t < 700) openEditor(g.id);
+  } else if (g.type === 'pan') rememberView();
+}
+boardEl.addEventListener('pointerup', endPointer);
+boardEl.addEventListener('pointercancel', endPointer);
+boardEl.addEventListener('wheel', e => {
+  e.preventDefault();
+  const p = rel({x: e.clientX, y: e.clientY});
+  if (e.ctrlKey || e.metaKey) zoomAt(p.x, p.y, Math.exp(-e.deltaY * 0.01));
+  else { view.x -= e.deltaX; view.y -= e.deltaY; applyView(); }
+  clearTimeout(boardEl._wt); boardEl._wt = setTimeout(rememberView, 300);
+}, {passive: false});
+boardEl.addEventListener('keydown', e => {
+  const ne = e.target.closest && e.target.closest('.note');
+  if (ne && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); openEditor(ne.dataset.id); }
+});
+
+/* ---------- toast & helpers ---------- */
+let toastT = null;
+function toast(msg, action) {
+  const t = $('#toast'); clearTimeout(toastT);
+  t.innerHTML = ''; const s = document.createElement('span'); s.textContent = msg; t.appendChild(s);
+  if (action) { const b = document.createElement('button'); b.textContent = action.label; b.onclick = () => { t.hidden = true; action.run(); }; t.appendChild(b); }
+  t.hidden = false; toastT = setTimeout(() => { t.hidden = true; }, action ? 6000 : 3500);
+}
+function busy(msg) {
+  const t = $('#toast'); clearTimeout(toastT);
+  t.innerHTML = '<span class="spin"></span>'; const s = document.createElement('span'); s.textContent = msg; t.appendChild(s); t.hidden = false;
+}
+const unbusy = () => { $('#toast').hidden = true; };
+function askConfirm(text, sub, okLabel) {
+  return new Promise(res => {
+    $('#cfText').textContent = text; $('#cfSub').textContent = sub || ''; $('#cfYes').textContent = okLabel || 'OK';
+    const m = $('#confirm'); m.hidden = false; $('#cfYes').focus();
+    const done = v => { m.hidden = true; $('#cfYes').onclick = $('#cfNo').onclick = null; res(v); };
+    $('#cfYes').onclick = () => done(true); $('#cfNo').onclick = () => done(false);
+  });
+}
+let menuEl = null;
+function closeMenu() { if (menuEl) { menuEl.remove(); menuEl = null; document.removeEventListener('pointerdown', outsideMenu, true); } }
+function outsideMenu(e) { if (menuEl && !menuEl.contains(e.target)) closeMenu(); }
+function openMenu(btn, items) {
+  closeMenu();
+  const m = document.createElement('div'); m.className = 'menu'; m.setAttribute('role', 'menu');
+  for (const it of items) {
+    if (!it) continue;
+    const b = document.createElement('button'); b.setAttribute('role', 'menuitem');
+    b.textContent = it.label;
+    if (it.sub) { const s = document.createElement('small'); s.textContent = it.sub; b.appendChild(s); }
+    b.onclick = () => { closeMenu(); it.run(); };
+    m.appendChild(b);
+  }
+  document.body.appendChild(m);
+  const r = btn.getBoundingClientRect();
+  m.style.top = (r.bottom + 6) + 'px';
+  m.style.left = clamp(r.right - m.offsetWidth, 12, window.innerWidth - m.offsetWidth - 12) + 'px';
+  menuEl = m; setTimeout(() => document.addEventListener('pointerdown', outsideMenu, true));
+  m.querySelector('button')?.focus();
+}
+function dataURLtoBlob(u) {
+  const [h, b64] = u.split(','); const mime = (h.match(/data:([^;]+)/) || [])[1] || 'image/jpeg';
+  const bin = atob(b64); const arr = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+  return new Blob([arr], {type: mime});
+}
+
+/* ---------- note editor ---------- */
+let ed = null, edMode = 'text', penColor = INK[0], penW = 12, curStroke = null, penSeen = false, D = 360;
+const edNote = $('#edNote'), edText = $('#edText'), edCanvas = $('#edCanvas');
+function buildSwatches() {
+  $('#edColors').innerHTML = PALETTE.map(p => `<button class="sw" data-c="${p.id}" style="background:${p.bg}" aria-label="${p.name}" aria-pressed="false"></button>`).join('');
+  $('#inkColors').innerHTML = INK.map((c, i) => `<button class="sw small" data-ink="${c}" style="background:${c}" aria-label="Stiftfarbe ${['Schwarz','Blau','Rot','Grün'][i]}" aria-pressed="${i === 0}"></button>`).join('');
+  $('#edColors').onclick = e => { const b = e.target.closest('[data-c]'); if (!b || !ed) return; ed.n.c = b.dataset.c; lastColor = ed.n.c; edPaint(); };
+  $('#inkColors').onclick = e => { const b = e.target.closest('[data-ink]'); if (!b) return; penColor = b.dataset.ink; setMode('pen'); markPressed('#inkColors', b); };
+  $('#penSize').onclick = e => { const b = e.target.closest('[data-w]'); if (!b) return; penW = +b.dataset.w; setMode('pen'); markPressed('#penSize', b); };
+  $('#modeSeg').onclick = e => { const b = e.target.closest('[data-mode]'); if (b) setMode(b.dataset.mode); };
+}
+function markPressed(sel, btn) { for (const b of document.querySelectorAll(sel + ' button')) b.setAttribute('aria-pressed', String(b === btn)); }
+function setMode(m) {
+  edMode = m; edNote.dataset.mode = m;
+  for (const b of document.querySelectorAll('#modeSeg button')) b.setAttribute('aria-pressed', String(b.dataset.mode === m));
+  if (m === 'text' && !edText.hidden) setTimeout(() => edText.focus(), 30);
+  else edText.blur();
+}
+function openEditor(id, isNew) {
+  const n = findNote(id); if (!n) return;
+  ed = {n, isNew: !!isNew, snapshot: JSON.stringify(n)};
+  D = Math.round(Math.min(window.innerWidth * 0.8, window.innerHeight * 0.46, 440));
+  edNote.style.setProperty('--d', D + 'px');
+  $('#editor').hidden = false;
+  edText.value = n.t || ''; $('#edCaption').value = n.t || ''; $('#edAsText').checked = !!n.asText;
+  $('#edOcr').hidden = !(ocrOK && n.img);
+  edPaint();
+  setMode('text');
+}
+function edPaint() {
+  const n = ed.n, showImg = n.img && !n.asText;
+  edNote.style.background = col(n.c).bg;
+  const im = $('#edImg'); im.hidden = !showImg; if (showImg) im.src = n.img;
+  edText.hidden = !!showImg;
+  $('#imgRow').hidden = !n.img;
+  edText.style.fontSize = (fs(edText.value) * D / S) + 'px';
+  edText.style.padding = `${Math.round(18 * D / S)}px ${Math.round(14 * D / S)}px`;
+  for (const b of document.querySelectorAll('#edColors button')) b.setAttribute('aria-pressed', String(b.dataset.c === n.c));
+  const dpr = Math.min(window.devicePixelRatio || 1, 3);
+  edCanvas.width = Math.round(D * dpr); edCanvas.height = Math.round(D * dpr);
+  edDrawInk();
+}
+function edDrawInk() {
+  const ctx = edCanvas.getContext('2d'), sc = edCanvas.width / 1000;
+  ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.clearRect(0, 0, edCanvas.width, edCanvas.height);
+  ctx.setTransform(sc, 0, 0, sc, 0, 0);
+  for (const s of ed.n.ink || []) drawStroke(ctx, s);
+  if (curStroke) drawStroke(ctx, curStroke);
+}
+function drawStroke(ctx, s) {
+  const d = pathD(s.p); if (!d) return;
+  ctx.strokeStyle = s.c; ctx.lineWidth = s.w; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  ctx.stroke(new Path2D(d));
+}
+function cvPoint(e) { const r = edCanvas.getBoundingClientRect(); return [Math.round((e.clientX - r.left) / r.width * 1000), Math.round((e.clientY - r.top) / r.height * 1000)]; }
+function eraseAt(x, y) {
+  const before = ed.n.ink.length;
+  ed.n.ink = ed.n.ink.filter(s => { const r = 26 + s.w / 2; for (let i = 0; i < s.p.length; i += 2) if (Math.hypot(s.p[i] - x, s.p[i + 1] - y) < r) return false; return true; });
+  if (ed.n.ink.length !== before) edDrawInk();
+}
+edCanvas.addEventListener('pointerdown', e => {
+  if (e.pointerType === 'pen') penSeen = true;
+  if (penSeen && e.pointerType === 'touch') return; // palm rejection once a pencil was used
+  e.preventDefault(); edCanvas.setPointerCapture(e.pointerId);
+  const [x, y] = cvPoint(e);
+  if (!ed.n.ink) ed.n.ink = [];
+  if (edMode === 'erase') { eraseAt(x, y); edCanvas._erasing = e.pointerId; return; }
+  const w = e.pointerType === 'pen' && e.pressure > 0 ? Math.round(penW * (0.6 + e.pressure * 0.8)) : penW;
+  curStroke = {c: penColor, w, p: [x, y], pid: e.pointerId};
+  edDrawInk();
+});
+edCanvas.addEventListener('pointermove', e => {
+  if (edCanvas._erasing === e.pointerId) { const [x, y] = cvPoint(e); eraseAt(x, y); return; }
+  if (!curStroke || curStroke.pid !== e.pointerId) return;
+  const evs = e.getCoalescedEvents ? e.getCoalescedEvents() : [e];
+  for (const ev of evs.length ? evs : [e]) {
+    const [x, y] = cvPoint(ev), p = curStroke.p;
+    if (Math.hypot(x - p[p.length - 2], y - p[p.length - 1]) >= 3) p.push(x, y);
+  }
+  edDrawInk();
+});
+function edEnd(e) {
+  if (edCanvas._erasing === e.pointerId) { edCanvas._erasing = null; return; }
+  if (!curStroke || curStroke.pid !== e.pointerId) return;
+  const {c, w, p} = curStroke; curStroke = null;
+  ed.n.ink.push({c, w, p}); edDrawInk();
+}
+edCanvas.addEventListener('pointerup', edEnd);
+edCanvas.addEventListener('pointercancel', edEnd);
+$('#edUndo').onclick = () => { if (ed && ed.n.ink && ed.n.ink.length) { ed.n.ink.pop(); edDrawInk(); } };
+edText.addEventListener('input', () => { ed.n.t = edText.value; edText.style.fontSize = (fs(edText.value) * D / S) + 'px'; });
+$('#edCaption').addEventListener('input', e => { ed.n.t = e.target.value; });
+$('#edAsText').onchange = e => { ed.n.asText = e.target.checked; edText.value = ed.n.t || ''; edPaint(); setMode('text'); };
+$('#edOcr').onclick = () => { const n = ed.n; closeEditor(); runOCR([n], () => Promise.resolve(dataURLtoBlob(n.img))); };
+function isBlank(n) { return !(n.t || '').trim() && !(n.ink && n.ink.length) && !n.img; }
+function closeEditor() {
+  if (!ed) return;
+  const {n, isNew, snapshot} = ed; ed = null; curStroke = null;
+  $('#editor').hidden = true; edText.blur();
+  const b = board();
+  if (isBlank(n)) { b.notes.splice(b.notes.indexOf(n), 1); if (!isNew) changed(); render(); return; }
+  if (isNew || JSON.stringify(n) !== snapshot) changed();
+  render();
+}
+$('#edDone').onclick = closeEditor;
+$('#editor').addEventListener('pointerdown', e => { if (e.target.id === 'editor') closeEditor(); });
+$('#edDel').onclick = () => {
+  const n = ed.n, b = board(), i = b.notes.indexOf(n);
+  ed = null; $('#editor').hidden = true;
+  b.notes.splice(i, 1); changed(); render();
+  toast('Notiz gelöscht', {label: 'Rückgängig', run: () => { b.notes.splice(i, 0, n); changed(); render(); }});
+};
+$('#edDup').onclick = () => {
+  const n = ed.n; closeEditor();
+  const c = JSON.parse(JSON.stringify(n)); c.id = uid(); c.x += 28; c.y += 28;
+  board().notes.push(c); changed(); render(); toast('Notiz dupliziert');
+};
+$('#addBtn').onclick = () => {
+  const c = viewCenter(), j = () => Math.round((Math.random() - 0.5) * 60);
+  const n = {id: uid(), x: Math.round(c.x - S / 2 + j()), y: Math.round(c.y - S / 2 + j()), c: lastColor, t: '', ink: []};
+  board().notes.push(n); render(); openEditor(n.id, true);
+};
+
+/* ---------- arrange ---------- */
+function readingOrder(ns) {
+  const s = [...ns].sort((a, b) => a.y - b.y), rows = [];
+  for (const n of s) { const r = rows.find(r => Math.abs(r.y - n.y) < S * 0.55); if (r) r.items.push(n); else rows.push({y: n.y, items: [n]}); }
+  return rows.flatMap(r => r.items.sort((a, b) => a.x - b.x));
+}
+function arrange(kind) {
+  const b = board(), ns = b.notes; if (!ns.length) return;
+  const bb = bounds(ns);
+  if (kind === 'color') {
+    let cx = bb.x0;
+    for (const p of PALETTE) {
+      const g = readingOrder(ns.filter(n => n.c === p.id)); if (!g.length) continue;
+      const rows = 5;
+      g.forEach((n, i) => { n.x = cx + Math.floor(i / rows) * (S + GAP); n.y = bb.y0 + (i % rows) * (S + GAP); });
+      cx += Math.ceil(g.length / rows) * (S + GAP) + 56;
+    }
+  } else {
+    const sorted = readingOrder(ns), cols = Math.max(1, Math.ceil(Math.sqrt(ns.length * 1.6)));
+    sorted.forEach((n, i) => { n.x = bb.x0 + (i % cols) * (S + GAP); n.y = bb.y0 + Math.floor(i / cols) * (S + GAP); });
+  }
+  world.classList.add('animate');
+  for (const el of world.children) { const n = findNote(el.dataset.id); if (n) { el.style.left = n.x + 'px'; el.style.top = n.y + 'px'; } }
+  setTimeout(() => { world.classList.remove('animate'); fitView(); }, 380);
+  changed();
+}
+$('#arrBtn').onclick = e => openMenu(e.currentTarget, [
+  {label: 'Nach Farbe sortieren', sub: 'Eine Spalte je Zettelfarbe', run: () => arrange('color')},
+  {label: 'Als Raster anordnen', sub: 'Reihenfolge bleibt erhalten', run: () => arrange('grid')},
+]);
+
+/* ---------- boards ---------- */
+function renderDrawer() {
+  const ul = $('#boardList'); ul.innerHTML = '';
+  for (const b of state.boards) {
+    const li = document.createElement('li'); if (b.id === state.current) li.className = 'cur';
+    const open = document.createElement('button'); open.className = 'open';
+    open.textContent = b.name; const sm = document.createElement('small');
+    sm.textContent = b.notes.length === 1 ? '1 Notiz' : b.notes.length + ' Notizen'; open.appendChild(sm);
+    open.onclick = () => { board().view = {...view}; state.current = b.id; stash(); $('#drawer').hidden = true; render(); if (b.view) { view = {...b.view}; applyView(); } else fitView(); };
+    const ren = document.createElement('button'); ren.className = 'icon-btn'; ren.setAttribute('aria-label', 'Umbenennen: ' + b.name);
+    ren.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M4 20h4L19 9l-4-4L4 16z"/></svg>';
+    ren.onclick = () => {
+      const inp = document.createElement('input'); inp.value = b.name; inp.setAttribute('aria-label', 'Board-Name');
+      li.replaceChild(inp, open); inp.focus(); inp.select();
+      const fin = () => { const v = inp.value.trim(); if (v && v !== b.name) { b.name = v; changed(); } renderDrawer(); $('#boardName').textContent = board().name; };
+      inp.onkeydown = e => { if (e.key === 'Enter') inp.blur(); if (e.key === 'Escape') { inp.value = b.name; inp.blur(); } };
+      inp.onblur = fin;
+    };
+    const del = document.createElement('button'); del.className = 'icon-btn'; del.setAttribute('aria-label', 'Löschen: ' + b.name);
+    del.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 7h14M10 7V4h4v3M7 7l1 13h8l1-13"/></svg>';
+    del.disabled = state.boards.length < 2;
+    del.onclick = async () => {
+      if (!await askConfirm(`„${b.name}“ löschen?`, `${b.notes.length} Notizen gehen dabei verloren.`, 'Löschen')) return;
+      state.boards = state.boards.filter(x => x !== b);
+      if (state.current === b.id) state.current = state.boards[0].id;
+      changed(); renderDrawer(); render(); fitView();
+    };
+    li.append(open, ren, del); ul.appendChild(li);
+  }
+}
+$('#boardBtn').onclick = () => { renderDrawer(); $('#drawer').hidden = false; };
+$('#drClose').onclick = () => { $('#drawer').hidden = true; };
+$('#drawer').addEventListener('pointerdown', e => { if (e.target.id === 'drawer') $('#drawer').hidden = true; });
+$('#newBoard').onclick = () => {
+  board().view = {...view};
+  const b = {id: uid(), name: 'Board ' + (state.boards.length + 1), notes: []};
+  state.boards.push(b); state.current = b.id; changed(); renderDrawer(); render(); fitView();
+};
+
+/* ---------- capture: find sticky notes in a photo ---------- */
+function hueDiff(a, b) { const d = Math.abs(a - b) % 360; return Math.min(d, 360 - d); }
+function detect(img) {
+  const W0 = img.naturalWidth, H0 = img.naturalHeight, sc = Math.min(1, 900 / Math.max(W0, H0));
+  const W = Math.max(1, Math.round(W0 * sc)), H = Math.max(1, Math.round(H0 * sc)), N = W * H;
+  const c = document.createElement('canvas'); c.width = W; c.height = H;
+  const ctx = c.getContext('2d', {willReadFrequently: true}); ctx.drawImage(img, 0, 0, W, H);
+  const px = ctx.getImageData(0, 0, W, H).data;
+  const hue = new Float32Array(N), cand = new Uint8Array(N);
+  for (let i = 0, j = 0; i < N; i++, j += 4) {
+    const r = px[j], g = px[j + 1], b = px[j + 2], mx = Math.max(r, g, b), mn = Math.min(r, g, b), ch = mx - mn;
+    if (ch > 36 && mx > 105 && ch / mx > 0.2) {
+      let h = mx === r ? ((g - b) / ch) % 6 : mx === g ? (b - r) / ch + 2 : (r - g) / ch + 4;
+      h *= 60; if (h < 0) h += 360; hue[i] = h; cand[i] = 1;
+    }
+  }
+  const m = new Uint8Array(N); // erode once to cut thin bridges between neighbouring notes
+  for (let y = 1; y < H - 1; y++) for (let x = 1; x < W - 1; x++) {
+    const i = y * W + x; if (cand[i] && cand[i - 1] && cand[i + 1] && cand[i - W] && cand[i + W]) m[i] = 1;
+  }
+  const lab = new Int32Array(N), stack = new Int32Array(N), comps = [];
+  for (let s = 0; s < N; s++) {
+    if (!m[s] || lab[s]) continue;
+    const id = comps.length + 1; let sp = 0; stack[sp++] = s; lab[s] = id;
+    const cp = {area: 0, x0: W, y0: H, x1: 0, y1: 0, cs: 0, sn: 0};
+    while (sp) {
+      const i = stack[--sp], x = i % W, y = (i / W) | 0;
+      cp.area++; if (x < cp.x0) cp.x0 = x; if (x > cp.x1) cp.x1 = x; if (y < cp.y0) cp.y0 = y; if (y > cp.y1) cp.y1 = y;
+      const hr = hue[i] * Math.PI / 180; cp.cs += Math.cos(hr); cp.sn += Math.sin(hr);
+      const nb = [x > 0 ? i - 1 : -1, x < W - 1 ? i + 1 : -1, y > 0 ? i - W : -1, y < H - 1 ? i + W : -1];
+      for (const k of nb) if (k >= 0 && m[k] && !lab[k] && hueDiff(hue[k], hue[i]) < 22) { lab[k] = id; stack[sp++] = k; }
+    }
+    comps.push(cp);
+  }
+  const minA = Math.max(120, N * 0.0012), out = [];
+  for (const cp of comps) {
+    if (cp.area < minA) continue;
+    const bw = cp.x1 - cp.x0 + 3, bh = cp.y1 - cp.y0 + 3, fill = cp.area / (bw * bh), asp = bw / bh;
+    if (fill < 0.55) continue;
+    let h = Math.atan2(cp.sn, cp.cs) * 180 / Math.PI; if (h < 0) h += 360;
+    const color = PALETTE.reduce((best, p) => hueDiff(p.hue, h) < hueDiff(best.hue, h) ? p : best, PALETTE[0]).id;
+    const box = {x: (cp.x0 - 1) / sc, y: (cp.y0 - 1) / sc, w: bw / sc, h: bh / sc, c: color};
+    const pieces = asp > 1.6 && fill > 0.7 ? Math.round(asp) : asp < 1 / 1.6 && fill > 0.7 ? -Math.round(1 / asp) : 1;
+    if (Math.abs(pieces) > 4) continue;
+    if (pieces > 1) for (let k = 0; k < pieces; k++) out.push({...box, x: box.x + k * box.w / pieces, w: box.w / pieces});
+    else if (pieces < -1) for (let k = 0; k < -pieces; k++) out.push({...box, y: box.y + k * box.h / -pieces, h: box.h / -pieces});
+    else out.push(box);
+  }
+  // reading order
+  const avgH = out.reduce((s, b) => s + b.h, 0) / (out.length || 1), rows = [];
+  for (const b of out.sort((a, b) => a.y - b.y)) { const r = rows.find(r => Math.abs(r.y - b.y) < avgH * 0.5); if (r) r.items.push(b); else rows.push({y: b.y, items: [b]}); }
+  return rows.flatMap(r => r.items.sort((a, b) => a.x - b.x));
+}
+function crop(img, bx) {
+  const ins = bx.whole ? 0 : 0.035;
+  const x = bx.x + bx.w * ins, y = bx.y + bx.h * ins, w = bx.w * (1 - 2 * ins), h = bx.h * (1 - 2 * ins);
+  const f = Math.min(1, 420 / Math.max(w, h));
+  const c = document.createElement('canvas'); c.width = Math.max(1, Math.round(w * f)); c.height = Math.max(1, Math.round(h * f));
+  c.getContext('2d').drawImage(img, x, y, w, h, 0, 0, c.width, c.height);
+  return {canvas: c, url: c.toDataURL('image/jpeg', 0.82)};
+}
+let cap = null;
+function loadImageFile(f) {
+  return new Promise((res, rej) => { const im = new Image(); im.onload = () => res(im); im.onerror = rej; im.src = URL.createObjectURL(f); });
+}
+$('#capBtn').onclick = () => $('#capFile').click();
+$('#capFile').onchange = async e => {
+  const f = e.target.files && e.target.files[0]; e.target.value = ''; if (!f) return;
+  busy('Suche Zettel im Foto …');
+  try {
+    const img = await loadImageFile(f);
+    await new Promise(r => setTimeout(r, 30));
+    const boxes = detect(img); unbusy(); openCapture(img, boxes);
+  } catch (err) { unbusy(); toast('Das Foto konnte nicht gelesen werden. Versuch es als JPEG oder PNG.'); }
+};
+function openCapture(img, boxes) {
+  cap = {img, boxes: boxes.map(b => ({...b, on: true}))};
+  if (!boxes.length) cap.boxes = [];
+  $('#capImg').src = img.src;
+  $('#ocrLabel').hidden = !ocrOK || !boxes.length;
+  drawCapBoxes(); $('#capture').hidden = false;
+}
+function drawCapBoxes() {
+  const W0 = cap.img.naturalWidth, H0 = cap.img.naturalHeight, on = cap.boxes.filter(b => b.on).length;
+  $('#capBoxes').innerHTML = cap.boxes.map((b, i) =>
+    `<button class="box${b.on ? '' : ' off'}" data-i="${i}" aria-pressed="${b.on}" aria-label="Zettel ${i + 1} ${b.on ? 'übernehmen' : 'auslassen'}" style="left:${b.x / W0 * 100}%;top:${b.y / H0 * 100}%;width:${b.w / W0 * 100}%;height:${b.h / H0 * 100}%"><b>${i + 1}</b></button>`).join('');
+  if (cap.boxes.length) {
+    $('#capInfo').textContent = `${cap.boxes.length} Zettel gefunden. Tippe auf einen Rahmen, um ihn auszulassen.`;
+    $('#capOk').textContent = on === 1 ? '1 Zettel übernehmen' : `${on} Zettel übernehmen`;
+    $('#capOk').disabled = on === 0;
+  } else {
+    $('#capInfo').textContent = 'Keine Zettel erkannt. Am besten klappt es mit kräftigen Farben auf hellem, ruhigem Untergrund und gerader Aufnahme.';
+    $('#capOk').textContent = 'Ganzes Foto übernehmen'; $('#capOk').disabled = false;
+  }
+}
+$('#capBoxes').onclick = e => { const b = e.target.closest('.box'); if (!b) return; const x = cap.boxes[+b.dataset.i]; x.on = !x.on; drawCapBoxes(); };
+$('#capCancel').onclick = () => { $('#capture').hidden = true; URL.revokeObjectURL(cap.img.src); cap = null; };
+$('#capOk').onclick = async () => {
+  const img = cap.img, ocr = ocrOK && $('#ocrToggle').checked && cap.boxes.length;
+  let sel = cap.boxes.filter(b => b.on);
+  if (!cap.boxes.length) sel = [{x: 0, y: 0, w: img.naturalWidth, h: img.naturalHeight, c: lastColor, whole: true}];
+  $('#capture').hidden = true; cap = null;
+  const crops = sel.map(b => crop(img, b));
+  URL.revokeObjectURL(img.src);
+  const b = board(), avg = sel.reduce((s, x) => s + Math.max(x.w, x.h), 0) / sel.length, sc = S * 1.14 / avg;
+  const minX = Math.min(...sel.map(x => x.x)), minY = Math.min(...sel.map(x => x.y));
+  let ox, oy;
+  if (b.notes.length) { const bb = bounds(b.notes); ox = bb.x1 + 120; oy = bb.y0; } else { const c = viewCenter(); ox = c.x - S; oy = c.y - S; }
+  const added = sel.map((x, i) => ({id: uid(), x: Math.round(ox + (x.x - minX) * sc), y: Math.round(oy + (x.y - minY) * sc), c: x.c, t: '', ink: [], img: crops[i].url}));
+  b.notes.push(...added); changed(); render(); fitView();
+  if (ocr) runOCR(added, i => new Promise(r => crops[i].canvas.toBlob(r, 'image/jpeg', 0.88)));
+  else toast(added.length === 1 ? '1 Zettel übernommen' : `${added.length} Zettel übernommen`);
+};
+
+/* ---------- Handschrift-Erkennung (nur in der App, Apple Vision auf dem Gerät) ---------- */
+function blobToB64(blob) {
+  return new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(String(r.result).split(',')[1]); r.onerror = rej; r.readAsDataURL(blob); });
+}
+async function runOCR(notes, getBlob) {
+  if (!VisionOCR) return;
+  const total = notes.length; let done = 0, found = 0;
+  busy(`Lese Handschrift … 0 von ${total}`);
+  try {
+    for (let i = 0; i < total; i++) {
+      const b64 = await blobToB64(await getBlob(i));
+      const r = await VisionOCR.recognize({image: b64, languages: ['de-DE', 'en-US']});
+      const t = (r && typeof r.text === 'string') ? r.text.trim() : '';
+      if (t) { notes[i].t = t; found++; }
+      done++; busy(`Lese Handschrift … ${done} von ${total}`);
+    }
+    unbusy(); changed(); render();
+    toast(found ? `Text auf ${found} von ${total} Zetteln erkannt` : 'Kein Text erkannt');
+  } catch (e) {
+    unbusy(); if (done) { changed(); render(); }
+    toast('Texterkennung hat nicht geklappt. Du kannst sie im Notiz-Editor erneut starten.');
+  }
+}
+
+/* ---------- export ---------- */
+function loadImg(src) { return new Promise(r => { const i = new Image(); i.onload = () => r(i); i.onerror = () => r(null); i.src = src; }); }
+function wrapLines(ctx, text, maxW) {
+  const out = [];
+  for (const para of String(text).split('\n')) {
+    let line = '';
+    for (const w of para.split(/\s+/)) {
+      const t = line ? line + ' ' + w : w;
+      if (ctx.measureText(t).width > maxW && line) { out.push(line); line = w; } else line = t;
+    }
+    out.push(line);
+  }
+  return out;
+}
+async function boardPNG() {
+  const b = board(), bb = bounds(b.notes), pad = 60;
+  const sc = Math.min(2, 6000 / Math.max(bb.w + pad * 2, bb.h + pad * 2));
+  const c = document.createElement('canvas');
+  c.width = Math.round((bb.w + pad * 2) * sc); c.height = Math.round((bb.h + pad * 2) * sc);
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#EEF0EA'; ctx.fillRect(0, 0, c.width, c.height);
+  ctx.scale(sc, sc); ctx.translate(pad - bb.x0, pad - bb.y0);
+  
+  for (const n of b.notes) {
+    ctx.save(); ctx.shadowColor = 'rgba(0,0,0,.18)'; ctx.shadowBlur = 10; ctx.shadowOffsetY = 4;
+    ctx.fillStyle = col(n.c).bg; ctx.fillRect(n.x, n.y, S, S); ctx.restore();
+    if (n.img && !n.asText) {
+      const im = await loadImg(n.img);
+      if (im) { const f = Math.max(S / im.width, S / im.height), w = im.width * f, h = im.height * f;
+        ctx.save(); ctx.beginPath(); ctx.rect(n.x, n.y, S, S); ctx.clip(); ctx.drawImage(im, n.x + (S - w) / 2, n.y + (S - h) / 2, w, h); ctx.restore(); }
+    } else if (n.t) {
+      const f = fs(n.t); ctx.font = `${f}px Noteworthy, "Marker Felt", "Bradley Hand", cursive`; ctx.fillStyle = '#1D1D1F'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      const lines = wrapLines(ctx, n.t, S - 28), lh = f * 1.15, maxL = Math.floor((S - 20) / lh), shown = lines.slice(0, maxL);
+      shown.forEach((l, i) => ctx.fillText(l, n.x + S / 2, n.y + S / 2 + (i - (shown.length - 1) / 2) * lh));
+    }
+    if (n.ink && n.ink.length) { ctx.save(); ctx.translate(n.x, n.y); ctx.scale(S / 1000, S / 1000); n.ink.forEach(s => drawStroke(ctx, s)); ctx.restore(); }
+  }
+  return c;
+}
+const safeName = s => (s || 'Board').replace(/[\\/:*?"<>|]+/g, '-').slice(0, 80);
+async function shareFile(filename, data, mime, fallback) {
+  const blob = data instanceof Blob ? data : new Blob([data], {type: mime});
+  try {
+    if (NATIVE && FS && Share) {
+      const w = await FS.writeFile({path: filename, data: await blobToB64(blob), directory: 'CACHE'});
+      await Share.share({title: filename, files: [w.uri]});
+      return true;
+    }
+    const file = new File([blob], filename, {type: mime});
+    if (navigator.canShare && navigator.canShare({files: [file]})) { await navigator.share({files: [file], title: filename}); return true; }
+    downloadBlob(blob, filename); return true;
+  } catch (e) {
+    const msg = String((e && (e.message || e.name)) || '');
+    if (/abort|cancel/i.test(msg)) return false;
+    if (fallback) { fallback(); return false; }
+    try { downloadBlob(blob, filename); return true; } catch (e2) { toast('Teilen hat nicht geklappt.'); return false; }
+  }
+}
+function downloadBlob(blob, filename) {
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = filename;
+  document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+}
+async function backupAll() {
+  const t = JSON.stringify({type: 'zettelwand-backup', v: 1, created: Date.now(), boards: state.boards});
+  const d = new Date(), stamp = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  if (await shareFile(`Zettelwand-Sicherung-${stamp}.json`, t, 'application/json')) { state.lastBackup = Date.now(); changed(); }
+}
+async function copyText(text, what) {
+  try { await navigator.clipboard.writeText(text); toast(what + ' in die Zwischenablage kopiert'); }
+  catch (e) { toast('Kopieren wurde vom Browser blockiert.'); }
+}
+function csv() {
+  const b = board(), q = v => '"' + String(v).replace(/"/g, '""') + '"';
+  const rows = [['Nr', 'Farbe', 'Text', 'Zeichnung', 'Foto'].join(';')];
+  readingOrder(b.notes).forEach((n, i) => rows.push([i + 1, col(n.c).name, q(n.t || ''), n.ink && n.ink.length ? 'ja' : 'nein', n.img ? 'ja' : 'nein'].join(';')));
+  return '﻿' + rows.join('\r\n');
+}
+$('#expBtn').onclick = e => openMenu(e.currentTarget, [
+  {label: 'Board als Bild', sub: 'PNG zum Teilen oder Sichern in Fotos', run: async () => {
+    if (!board().notes.length) return toast('Das Board ist leer.');
+    busy('Erzeuge Bild …'); const c = await boardPNG(); unbusy();
+    const blob = await new Promise(r => c.toBlob(r, 'image/png'));
+    shareFile(safeName(board().name) + '.png', blob, 'image/png', () => { $('#pvImg').src = c.toDataURL('image/png'); $('#preview').hidden = false; });
+  }},
+  {label: 'Texte als Tabelle', sub: 'CSV für Excel oder Numbers', run: () => shareFile(safeName(board().name) + '.csv', csv(), 'text/csv')},
+  {label: 'Texte kopieren', sub: 'Als Liste in die Zwischenablage', run: () => copyText(readingOrder(board().notes).map(n => '• ' + (n.t || '(ohne Text)').replace(/\n/g, ' ')).join('\n'), 'Liste') },
+  {label: 'Alle Boards sichern', sub: state.lastBackup ? 'Letzte Sicherung: ' + fmtDate(state.lastBackup) : 'Noch keine Sicherung', run: backupAll},
+  {label: 'Nur dieses Board sichern', sub: 'Zum Weitergeben an andere', run: () => {
+    const t = JSON.stringify({type: 'zettelwand-board', v: 1, board: board()});
+    shareFile(safeName(board().name) + '.zettelwand.json', t, 'application/json');
+  }},
+  {label: 'Sicherung laden', sub: 'Boards als neue Boards hinzufügen', run: () => $('#jsonFile').click()},
+]);
+$('#jsonFile').onchange = async e => {
+  const f = e.target.files && e.target.files[0]; e.target.value = ''; if (!f) return;
+  try {
+    const d = JSON.parse(await f.text());
+    const list = d.board ? [d.board] : Array.isArray(d.boards) ? d.boards : [];
+    if (!list.length) throw 0;
+    for (const b of list) { b.id = uid(); b.notes = (b.notes || []).map(n => ({...n, id: uid(), ink: n.ink || []})); delete b.view; state.boards.push(b); }
+    board().view = {...view}; state.current = list[list.length - 1].id; changed(); render(); fitView();
+    toast(list.length === 1 ? `„${list[0].name}“ geladen` : `${list.length} Boards geladen`);
+  } catch (err) { toast('Diese Datei ist keine gültige Zettelwand-Sicherung.'); }
+};
+$('#pvClose').onclick = () => { $('#preview').hidden = true; };
+
+/* ---------- keyboard ---------- */
+document.addEventListener('keydown', e => {
+  if (e.key !== 'Escape') return;
+  if (menuEl) return closeMenu();
+  if (!$('#editor').hidden) return closeEditor();
+  for (const id of ['#capture', '#drawer', '#preview']) if (!$(id).hidden) { if (id === '#capture') $('#capCancel').click(); else $(id).hidden = true; return; }
+});
+window.addEventListener('resize', () => { if (ed) { D = Math.round(Math.min(window.innerWidth * 0.8, window.innerHeight * 0.46, 440)); edNote.style.setProperty('--d', D + 'px'); edPaint(); } });
+
+/* ---------- start ---------- */
+async function init() {
+  buildSwatches();
+  await load();
+  render();
+  const b = board();
+  if (b.view) { view = {...b.view}; applyView(); } else fitView();
+  setStatus('saved');
+  if ('serviceWorker' in navigator && location.protocol === 'https:' && !NATIVE) navigator.serviceWorker.register('sw.js').catch(() => {});
+}
+init();
+})();
+</script>
+</body>
+</html>

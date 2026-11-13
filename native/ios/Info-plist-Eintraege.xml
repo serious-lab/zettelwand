@@ -1,0 +1,10 @@
+<!-- Diese Schlüssel in ios/App/App/Info.plist innerhalb von <dict> … </dict> einfügen
+     (in Xcode: App → Info → „+“, oder Info.plist als Quellcode öffnen). -->
+<key>NSCameraUsageDescription</key>
+<string>Zettelwand nutzt die Kamera, um deine Haftnotizen abzufotografieren.</string>
+<key>NSPhotoLibraryUsageDescription</key>
+<string>Zettelwand öffnet Fotos aus deiner Mediathek, um darauf Haftnotizen zu erkennen.</string>
+<key>NSPhotoLibraryAddUsageDescription</key>
+<string>Zettelwand kann exportierte Boards als Bild in deiner Mediathek sichern.</string>
+<key>ITSAppUsesNonExemptEncryption</key>
+<false/>
