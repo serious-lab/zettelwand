@@ -67,7 +67,7 @@ button{font-family:inherit}
 #board{position:relative;flex:1;overflow:hidden;touch-action:none;background-color:var(--bg);
   background-image:radial-gradient(var(--dot) 1.3px, transparent 1.5px)}
 #world{position:absolute;left:0;top:0;transform-origin:0 0}
-.note{position:absolute;width:180px;height:180px;border-radius:2px;overflow:hidden;box-shadow:var(--shadow);cursor:grab;color:#1D1D1F;
+.note{position:absolute;width:180px;height:180px;touch-action:none;border-radius:2px;overflow:hidden;box-shadow:var(--shadow);cursor:grab;color:#1D1D1F;
   -webkit-touch-callout:none;transition:opacity .2s, box-shadow .15s}
 .note.dragging{cursor:grabbing;box-shadow:0 14px 30px rgba(0,0,0,.28)}
 .note img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;pointer-events:none}
@@ -75,6 +75,9 @@ button{font-family:inherit}
   font-family:var(--font-note);line-height:1.15;white-space:pre-wrap;overflow-wrap:anywhere;overflow:hidden}
 .note .ink,.ed-note .ink{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;fill:none;stroke-linecap:round;stroke-linejoin:round}
 .note.dim{opacity:.2}
+.note .rh{position:absolute;right:0;bottom:0;width:34px;height:34px;cursor:nwse-resize;z-index:1;
+  background:linear-gradient(135deg, transparent 58%, rgba(0,0,0,.30) 58%, rgba(0,0,0,.30) 63%, transparent 63%, transparent 72%, rgba(0,0,0,.30) 72%, rgba(0,0,0,.30) 77%, transparent 77%)}
+.note.resizing{box-shadow:0 0 0 3px var(--accent), var(--shadow)}
 .note.hit{box-shadow:0 0 0 4px var(--accent), var(--shadow)}
 #world.animate .note{transition:left .35s ease, top .35s ease}
 @media (prefers-reduced-motion: reduce){ #world.animate .note{transition:none} }
@@ -107,7 +110,7 @@ button{font-family:inherit}
 .sw[aria-pressed="true"]{box-shadow:0 0 0 3px var(--chrome), 0 0 0 5px var(--accent)}
 
 .ed-stage{display:flex;justify-content:center}
-.ed-note{position:relative;width:var(--d);height:var(--d);border-radius:2px;overflow:hidden;box-shadow:var(--shadow);color:#1D1D1F;flex:none}
+.ed-note{position:relative;width:var(--dw);height:var(--dh);border-radius:2px;overflow:hidden;box-shadow:var(--shadow);color:#1D1D1F;flex:none}
 .ed-note img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
 #edText{position:absolute;inset:0;width:100%;height:100%;border:0;background:transparent;resize:none;text-align:center;color:#1D1D1F;
   font-family:var(--font-note);line-height:1.15;outline:none}
@@ -211,6 +214,10 @@ button{font-family:inherit}
       </div>
     </div>
     <div class="row"><span class="lbl-s">Zettel</span><div class="swatches" id="edColors"></div></div>
+    <div class="row"><span class="lbl-s">Format</span>
+      <div class="seg" id="fmtSeg"><button data-f="sq" aria-pressed="false">Quadrat</button><button data-f="hi" aria-pressed="false">Hoch</button><button data-f="qu" aria-pressed="false">Quer</button></div>
+      <div class="seg"><button id="szDown" aria-label="Zettel verkleinern">Kleiner</button><button id="szUp" aria-label="Zettel vergrößern">Größer</button></div>
+    </div>
     <div class="row" id="penRow"><span class="lbl-s">Stift</span><div class="swatches" id="inkColors"></div>
       <div class="seg" id="penSize"><button data-w="6" aria-pressed="false">Fein</button><button data-w="12" aria-pressed="true">Mittel</button><button data-w="22" aria-pressed="false">Dick</button></div>
       <button class="btn" id="edUndo">Rückgängig</button>
@@ -279,6 +286,9 @@ const PALETTE = [
 ];
 const INK = ['#1D1D1F', '#1F4FBF', '#C62828', '#2E7D32'];
 const S = 180, GAP = 24, LS = 'zettelwand.v1';
+const MINSZ = 80, MAXSZ = 1200;
+const NW = n => n.w || S, NH = n => n.h || S;   // Zettelgröße in Board-Einheiten (alte Zettel: 180 × 180)
+const noteFont = n => fs(n.t) * Math.min(NW(n), NH(n)) / S;
 const uid = () => Math.random().toString(36).slice(2, 8) + Date.now().toString(36).slice(-5);
 const col = id => PALETTE.find(p => p.id === id) || PALETTE[0];
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
@@ -315,6 +325,7 @@ function sampleState() {
     n(206, 204, 'b', 'Ziehen verschiebt, zwei Finger zoomen'),
     n(424, 222, 'o', '„Ordnen“ sortiert nach Farbe oder im Raster'),
     n(4, 430, 'v', 'Speichert automatisch auf diesem Gerät'),
+    n(424, 436, 'g', 'Ecke unten rechts ziehen ändert die Größe'),
     n(214, 420, 'b', 'Export als Bild, CSV oder Sicherung', [{c:'#1F4FBF', w:18, p:[740,130,790,190,890,70]}]),
   ]}]};
 }
@@ -385,22 +396,31 @@ function pathD(p) {
   }
   return d + ` L${p[p.length - 2]} ${p[p.length - 1]}`;
 }
-const inkSVG = ink => `<svg class="ink" viewBox="0 0 1000 1000" aria-hidden="true">${ink.map(s => `<path d="${pathD(s.p)}" stroke="${esc(s.c)}" stroke-width="${+s.w || 10}"/>`).join('')}</svg>`;
+/* Zeichnungen: x läuft über die Zettelbreite 0…1000, y im selben Maßstab (0…1000·h/w) */
+const inkBox = n => `0 0 1000 ${Math.round(1000 * NH(n) / NW(n))}`;
+const inkSVG = (ink, n) => `<svg class="ink" viewBox="${inkBox(n)}" preserveAspectRatio="xMinYMin slice" aria-hidden="true">${ink.map(s => `<path d="${pathD(s.p)}" stroke="${esc(s.c)}" stroke-width="${+s.w || 10}"/>`).join('')}</svg>`;
 const matches = n => !search || (n.t || '').toLowerCase().includes(search);
 
 function noteEl(n) {
   const el = document.createElement('div');
   el.className = 'note'; el.dataset.id = n.id;
   el.style.left = n.x + 'px'; el.style.top = n.y + 'px'; el.style.background = col(n.c).bg;
+  el.style.width = NW(n) + 'px'; el.style.height = NH(n) + 'px';
   if (!matches(n)) el.classList.add('dim'); else if (search) el.classList.add('hit');
   if (n.img && !n.asText) {
     const im = new Image(); im.src = n.img; im.alt = n.t || 'Erfasste Notiz'; im.draggable = false; el.appendChild(im);
   } else if (n.t) {
-    const t = document.createElement('div'); t.className = 'txt'; t.textContent = n.t; t.style.fontSize = fs(n.t) + 'px'; el.appendChild(t);
+    const t = document.createElement('div'); t.className = 'txt'; t.textContent = n.t; t.style.fontSize = noteFont(n) + 'px'; el.appendChild(t);
   }
-  if (n.ink && n.ink.length) el.insertAdjacentHTML('beforeend', inkSVG(n.ink));
+  if (n.ink && n.ink.length) el.insertAdjacentHTML('beforeend', inkSVG(n.ink, n));
+  el.insertAdjacentHTML('beforeend', '<span class="rh" title="Größe ändern"></span>');
   el.setAttribute('role', 'button'); el.setAttribute('aria-label', n.t ? 'Notiz: ' + n.t : 'Notiz ohne Text');
   return el;
+}
+function sizeEl(el, n) {
+  el.style.width = NW(n) + 'px'; el.style.height = NH(n) + 'px';
+  const t = el.querySelector('.txt'); if (t) t.style.fontSize = noteFont(n) + 'px';
+  const svg = el.querySelector('svg.ink'); if (svg) svg.setAttribute('viewBox', inkBox(n));
 }
 function render() {
   const b = board();
@@ -426,7 +446,7 @@ function applyView() {
 function rememberView() { board().view = {...view}; stash(); }
 function bounds(ns) {
   let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
-  for (const n of ns) { x0 = Math.min(x0, n.x); y0 = Math.min(y0, n.y); x1 = Math.max(x1, n.x + S); y1 = Math.max(y1, n.y + S); }
+  for (const n of ns) { x0 = Math.min(x0, n.x); y0 = Math.min(y0, n.y); x1 = Math.max(x1, n.x + NW(n)); y1 = Math.max(y1, n.y + NH(n)); }
   return {x0, y0, x1, y1, w: x1 - x0, h: y1 - y0};
 }
 function fitView() {
@@ -464,12 +484,12 @@ boardEl.addEventListener('pointerdown', e => {
   ptrs.set(e.pointerId, {x: e.clientX, y: e.clientY});
   try { boardEl.setPointerCapture(e.pointerId); } catch (_) {}
   if (ptrs.size === 1) {
-    const ne = e.target.closest('.note');
-    gesture = {type: ne ? 'note' : 'pan', sx: e.clientX, sy: e.clientY, t: Date.now(), moved: false, vx: view.x, vy: view.y};
-    if (ne) { const n = findNote(ne.dataset.id); Object.assign(gesture, {id: n.id, nx: n.x, ny: n.y, el: ne}); }
+    const ne = e.target.closest('.note'), rh = e.target.closest('.rh');
+    gesture = {type: rh ? 'resize' : ne ? 'note' : 'pan', sx: e.clientX, sy: e.clientY, t: Date.now(), moved: false, vx: view.x, vy: view.y};
+    if (ne) { const n = findNote(ne.dataset.id); Object.assign(gesture, {id: n.id, nx: n.x, ny: n.y, w0: NW(n), h0: NH(n), el: ne}); }
   } else if (ptrs.size === 2) {
-    if (gesture && gesture.type === 'note') {
-      gesture.el.classList.remove('dragging');
+    if (gesture && (gesture.type === 'note' || gesture.type === 'resize')) {
+      gesture.el.classList.remove('dragging', 'resizing');
       if (gesture.moved) changed();
     }
     startPinch();
@@ -488,7 +508,13 @@ boardEl.addEventListener('pointermove', e => {
   }
   const dx = e.clientX - gesture.sx, dy = e.clientY - gesture.sy;
   if (!gesture.moved && Math.hypot(dx, dy) < 7) return;
-  if (gesture.type === 'note') {
+  if (gesture.type === 'resize') {
+    const n = findNote(gesture.id); if (!n) return;
+    if (!gesture.moved) { gesture.moved = true; gesture.el.classList.add('resizing'); }
+    n.w = Math.round(clamp(gesture.w0 + dx / view.k, MINSZ, MAXSZ));
+    n.h = Math.round(clamp(gesture.h0 + dy / view.k, MINSZ, MAXSZ));
+    sizeEl(gesture.el, n);
+  } else if (gesture.type === 'note') {
     const b = board(), n = findNote(gesture.id); if (!n) return;
     if (!gesture.moved) {
       gesture.moved = true; gesture.el.classList.add('dragging');
@@ -514,8 +540,8 @@ function endPointer(e) {
   }
   if (ptrs.size > 0) return;
   const g = gesture; gesture = null;
-  if (g.type === 'note') {
-    g.el.classList.remove('dragging');
+  if (g.type === 'note' || g.type === 'resize') {
+    g.el.classList.remove('dragging', 'resizing');
     if (g.moved) changed();
     else if (e.type === 'pointerup' && Date.now() - g.t < 700) openEditor(g.id);
   } else if (g.type === 'pan') rememberView();
@@ -584,7 +610,7 @@ function dataURLtoBlob(u) {
 }
 
 /* ---------- note editor ---------- */
-let ed = null, edMode = 'text', penColor = INK[0], penW = 12, curStroke = null, penSeen = false, D = 360;
+let ed = null, edMode = 'text', penColor = INK[0], penW = 12, curStroke = null, penSeen = false, edR = 2, edDW = 360, edDH = 360;
 const edNote = $('#edNote'), edText = $('#edText'), edCanvas = $('#edCanvas');
 function buildSwatches() {
   $('#edColors').innerHTML = PALETTE.map(p => `<button class="sw" data-c="${p.id}" style="background:${p.bg}" aria-label="${p.name}" aria-pressed="false"></button>`).join('');
@@ -604,25 +630,34 @@ function setMode(m) {
 function openEditor(id, isNew) {
   const n = findNote(id); if (!n) return;
   ed = {n, isNew: !!isNew, snapshot: JSON.stringify(n)};
-  D = Math.round(Math.min(window.innerWidth * 0.8, window.innerHeight * 0.46, 440));
-  edNote.style.setProperty('--d', D + 'px');
   $('#editor').hidden = false;
   edText.value = n.t || ''; $('#edCaption').value = n.t || ''; $('#edAsText').checked = !!n.asText;
   $('#edOcr').hidden = !(ocrOK && n.img);
   edPaint();
   setMode('text');
 }
+function edLayout() {
+  const n = ed.n, box = Math.min(window.innerWidth * 0.8, window.innerHeight * 0.44, 460);
+  edR = box / Math.max(NW(n), NH(n));            // Bildschirm-Pixel je Board-Einheit
+  edDW = Math.round(NW(n) * edR); edDH = Math.round(NH(n) * edR);
+  edNote.style.setProperty('--dw', edDW + 'px'); edNote.style.setProperty('--dh', edDH + 'px');
+  const ar = NH(n) / NW(n);
+  const f = ar > 1.15 ? 'hi' : ar < 1 / 1.15 ? 'qu' : 'sq';
+  for (const b of document.querySelectorAll('#fmtSeg button')) b.setAttribute('aria-pressed', String(b.dataset.f === f));
+}
+function edFont() { edText.style.fontSize = (fs(edText.value) * Math.min(NW(ed.n), NH(ed.n)) / S * edR) + 'px'; }
 function edPaint() {
+  edLayout();
   const n = ed.n, showImg = n.img && !n.asText;
   edNote.style.background = col(n.c).bg;
   const im = $('#edImg'); im.hidden = !showImg; if (showImg) im.src = n.img;
   edText.hidden = !!showImg;
   $('#imgRow').hidden = !n.img;
-  edText.style.fontSize = (fs(edText.value) * D / S) + 'px';
-  edText.style.padding = `${Math.round(18 * D / S)}px ${Math.round(14 * D / S)}px`;
+  edFont();
+  edText.style.padding = `${Math.round(18 * edR)}px ${Math.round(14 * edR)}px`;
   for (const b of document.querySelectorAll('#edColors button')) b.setAttribute('aria-pressed', String(b.dataset.c === n.c));
   const dpr = Math.min(window.devicePixelRatio || 1, 3);
-  edCanvas.width = Math.round(D * dpr); edCanvas.height = Math.round(D * dpr);
+  edCanvas.width = Math.round(edDW * dpr); edCanvas.height = Math.round(edDH * dpr);
   edDrawInk();
 }
 function edDrawInk() {
@@ -637,7 +672,7 @@ function drawStroke(ctx, s) {
   ctx.strokeStyle = s.c; ctx.lineWidth = s.w; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
   ctx.stroke(new Path2D(d));
 }
-function cvPoint(e) { const r = edCanvas.getBoundingClientRect(); return [Math.round((e.clientX - r.left) / r.width * 1000), Math.round((e.clientY - r.top) / r.height * 1000)]; }
+function cvPoint(e) { const r = edCanvas.getBoundingClientRect(); return [Math.round((e.clientX - r.left) / r.width * 1000), Math.round((e.clientY - r.top) / r.width * 1000)]; }
 function eraseAt(x, y) {
   const before = ed.n.ink.length;
   ed.n.ink = ed.n.ink.filter(s => { const r = 26 + s.w / 2; for (let i = 0; i < s.p.length; i += 2) if (Math.hypot(s.p[i] - x, s.p[i + 1] - y) < r) return false; return true; });
@@ -673,7 +708,19 @@ function edEnd(e) {
 edCanvas.addEventListener('pointerup', edEnd);
 edCanvas.addEventListener('pointercancel', edEnd);
 $('#edUndo').onclick = () => { if (ed && ed.n.ink && ed.n.ink.length) { ed.n.ink.pop(); edDrawInk(); } };
-edText.addEventListener('input', () => { ed.n.t = edText.value; edText.style.fontSize = (fs(edText.value) * D / S) + 'px'; });
+edText.addEventListener('input', () => { ed.n.t = edText.value; edFont(); });
+function edResize(w, h) {
+  ed.n.w = Math.round(clamp(w, MINSZ, MAXSZ)); ed.n.h = Math.round(clamp(h, MINSZ, MAXSZ)); edPaint();
+}
+$('#fmtSeg').onclick = e => {
+  const b = e.target.closest('[data-f]'); if (!b || !ed) return;
+  const base = Math.sqrt(NW(ed.n) * NH(ed.n)), r = Math.sqrt(1.6);
+  if (b.dataset.f === 'sq') edResize(base, base);
+  else if (b.dataset.f === 'hi') edResize(base / r, base * r);
+  else edResize(base * r, base / r);
+};
+$('#szUp').onclick = () => { if (ed) edResize(NW(ed.n) * 1.25, NH(ed.n) * 1.25); };
+$('#szDown').onclick = () => { if (ed) edResize(NW(ed.n) / 1.25, NH(ed.n) / 1.25); };
 $('#edCaption').addEventListener('input', e => { ed.n.t = e.target.value; });
 $('#edAsText').onchange = e => { ed.n.asText = e.target.checked; edText.value = ed.n.t || ''; edPaint(); setMode('text'); };
 $('#edOcr').onclick = () => { const n = ed.n; closeEditor(); runOCR([n], () => Promise.resolve(dataURLtoBlob(n.img))); };
@@ -719,13 +766,22 @@ function arrange(kind) {
     let cx = bb.x0;
     for (const p of PALETTE) {
       const g = readingOrder(ns.filter(n => n.c === p.id)); if (!g.length) continue;
-      const rows = 5;
-      g.forEach((n, i) => { n.x = cx + Math.floor(i / rows) * (S + GAP); n.y = bb.y0 + (i % rows) * (S + GAP); });
-      cx += Math.ceil(g.length / rows) * (S + GAP) + 56;
+      for (let i = 0; i < g.length; i += 5) {            // höchstens 5 Zettel pro Spalte
+        const colNotes = g.slice(i, i + 5); let y = bb.y0;
+        for (const n of colNotes) { n.x = cx; n.y = y; y += NH(n) + GAP; }
+        cx += Math.max(...colNotes.map(NW)) + GAP;
+      }
+      cx += 56;
     }
   } else {
-    const sorted = readingOrder(ns), cols = Math.max(1, Math.ceil(Math.sqrt(ns.length * 1.6)));
-    sorted.forEach((n, i) => { n.x = bb.x0 + (i % cols) * (S + GAP); n.y = bb.y0 + Math.floor(i / cols) * (S + GAP); });
+    const sorted = readingOrder(ns);
+    const avgW = sorted.reduce((s, n) => s + NW(n) + GAP, 0) / sorted.length;
+    const rowW = Math.max(...sorted.map(NW)), maxW = Math.max(rowW, Math.ceil(Math.sqrt(ns.length * 1.6)) * avgW);
+    let x = bb.x0, y = bb.y0, rowH = 0;
+    for (const n of sorted) {
+      if (x > bb.x0 && x + NW(n) - bb.x0 > maxW) { x = bb.x0; y += rowH + GAP; rowH = 0; }
+      n.x = Math.round(x); n.y = Math.round(y); x += NW(n) + GAP; rowH = Math.max(rowH, NH(n));
+    }
   }
   world.classList.add('animate');
   for (const el of world.children) { const n = findNote(el.dataset.id); if (n) { el.style.left = n.x + 'px'; el.style.top = n.y + 'px'; } }
@@ -778,6 +834,26 @@ $('#newBoard').onclick = () => {
 
 /* ---------- capture: find sticky notes in a photo ---------- */
 function hueDiff(a, b) { const d = Math.abs(a - b) % 360; return Math.min(d, 360 - d); }
+function minRect(pts) {
+  // kleinstes umschließendes Rechteck über die Randpunkte; Winkel −45° … +45°
+  let best = null;
+  const test = a => {
+    const c = Math.cos(a), s = Math.sin(a);
+    let u0 = Infinity, u1 = -Infinity, v0 = Infinity, v1 = -Infinity;
+    for (let i = 0; i < pts.length; i += 2) {
+      const u = pts[i] * c + pts[i + 1] * s, v = -pts[i] * s + pts[i + 1] * c;
+      if (u < u0) u0 = u; if (u > u1) u1 = u; if (v < v0) v0 = v; if (v > v1) v1 = v;
+    }
+    const area = (u1 - u0) * (v1 - v0);
+    if (!best || area < best.area) best = {area, a, u0, u1, v0, v1};
+  };
+  for (let d = -45; d < 45; d += 1.5) test(d * Math.PI / 180);
+  const a0 = best.a;
+  for (let d = -1.5; d <= 1.5; d += 0.25) test(a0 + d * Math.PI / 180);
+  const {a, u0, u1, v0, v1} = best, c = Math.cos(a), s = Math.sin(a);
+  const uc = (u0 + u1) / 2, vc = (v0 + v1) / 2;
+  return {a, cx: uc * c - vc * s, cy: uc * s + vc * c, w: u1 - u0 + 3, h: v1 - v0 + 3};
+}
 function detect(img) {
   const W0 = img.naturalWidth, H0 = img.naturalHeight, sc = Math.min(1, 900 / Math.max(W0, H0));
   const W = Math.max(1, Math.round(W0 * sc)), H = Math.max(1, Math.round(H0 * sc)), N = W * H;
@@ -792,49 +868,71 @@ function detect(img) {
       h *= 60; if (h < 0) h += 360; hue[i] = h; cand[i] = 1;
     }
   }
-  const m = new Uint8Array(N); // erode once to cut thin bridges between neighbouring notes
+  const m = new Uint8Array(N); // einmal erodieren, um dünne Brücken zwischen Nachbarzetteln zu trennen
   for (let y = 1; y < H - 1; y++) for (let x = 1; x < W - 1; x++) {
     const i = y * W + x; if (cand[i] && cand[i - 1] && cand[i + 1] && cand[i - W] && cand[i + W]) m[i] = 1;
   }
   const lab = new Int32Array(N), stack = new Int32Array(N), comps = [];
-  for (let s = 0; s < N; s++) {
-    if (!m[s] || lab[s]) continue;
-    const id = comps.length + 1; let sp = 0; stack[sp++] = s; lab[s] = id;
-    const cp = {area: 0, x0: W, y0: H, x1: 0, y1: 0, cs: 0, sn: 0};
+  for (let s0 = 0; s0 < N; s0++) {
+    if (!m[s0] || lab[s0]) continue;
+    const id = comps.length + 1; let sp = 0; stack[sp++] = s0; lab[s0] = id;
+    const cp = {area: 0, cs: 0, sn: 0, edge: []};
     while (sp) {
       const i = stack[--sp], x = i % W, y = (i / W) | 0;
-      cp.area++; if (x < cp.x0) cp.x0 = x; if (x > cp.x1) cp.x1 = x; if (y < cp.y0) cp.y0 = y; if (y > cp.y1) cp.y1 = y;
+      cp.area++;
       const hr = hue[i] * Math.PI / 180; cp.cs += Math.cos(hr); cp.sn += Math.sin(hr);
       const nb = [x > 0 ? i - 1 : -1, x < W - 1 ? i + 1 : -1, y > 0 ? i - W : -1, y < H - 1 ? i + W : -1];
-      for (const k of nb) if (k >= 0 && m[k] && !lab[k] && hueDiff(hue[k], hue[i]) < 22) { lab[k] = id; stack[sp++] = k; }
+      let border = false;
+      for (const k of nb) {
+        if (k < 0 || !m[k]) { border = true; continue; }
+        if (!lab[k] && hueDiff(hue[k], hue[i]) < 22) { lab[k] = id; stack[sp++] = k; }
+        else if (lab[k] && lab[k] !== id) border = true;
+      }
+      if (border) cp.edge.push(x, y);
     }
     comps.push(cp);
   }
   const minA = Math.max(120, N * 0.0012), out = [];
   for (const cp of comps) {
-    if (cp.area < minA) continue;
-    const bw = cp.x1 - cp.x0 + 3, bh = cp.y1 - cp.y0 + 3, fill = cp.area / (bw * bh), asp = bw / bh;
+    if (cp.area < minA || cp.edge.length < 8) continue;
+    const r = minRect(cp.edge), fill = cp.area / (r.w * r.h), asp = r.w / r.h;
     if (fill < 0.55) continue;
     let h = Math.atan2(cp.sn, cp.cs) * 180 / Math.PI; if (h < 0) h += 360;
     const color = PALETTE.reduce((best, p) => hueDiff(p.hue, h) < hueDiff(best.hue, h) ? p : best, PALETTE[0]).id;
-    const box = {x: (cp.x0 - 1) / sc, y: (cp.y0 - 1) / sc, w: bw / sc, h: bh / sc, c: color};
-    const pieces = asp > 1.6 && fill > 0.7 ? Math.round(asp) : asp < 1 / 1.6 && fill > 0.7 ? -Math.round(1 / asp) : 1;
-    if (Math.abs(pieces) > 4) continue;
-    if (pieces > 1) for (let k = 0; k < pieces; k++) out.push({...box, x: box.x + k * box.w / pieces, w: box.w / pieces});
-    else if (pieces < -1) for (let k = 0; k < -pieces; k++) out.push({...box, y: box.y + k * box.h / -pieces, h: box.h / -pieces});
-    else out.push(box);
+    // Rechteckige Zettel (z. B. 76 × 127 mm ≈ 1 : 1,67) bleiben ganz. Nur fast genau 2-, 3- oder 4-fach so lange
+    // Flächen werden als gleichfarbige, aneinanderstoßende Quadrate geteilt.
+    const long = Math.max(asp, 1 / asp), n = Math.round(long);
+    if (long > 4.6) continue;
+    const parts = (n >= 2 && n <= 4 && Math.abs(long - n) < 0.13 * n && fill > 0.72) ? n : 1;
+    const ca = Math.cos(r.a), sa = Math.sin(r.a), alongW = asp > 1;
+    for (let k = 0; k < parts; k++) {
+      const off = (k - (parts - 1) / 2) * (alongW ? r.w : r.h) / parts;
+      const cx = r.cx + (alongW ? ca : -sa) * off, cy = r.cy + (alongW ? sa : ca) * off;
+      const w = alongW ? r.w / parts : r.w, hh = alongW ? r.h : r.h / parts;
+      const box = {cx: cx / sc, cy: cy / sc, w: w / sc, h: hh / sc, a: r.a, c: color};
+      box.x = box.cx - box.w / 2; box.y = box.cy - box.h / 2;
+      out.push(box);
+    }
   }
-  // reading order
+  // Lesereihenfolge
   const avgH = out.reduce((s, b) => s + b.h, 0) / (out.length || 1), rows = [];
   for (const b of out.sort((a, b) => a.y - b.y)) { const r = rows.find(r => Math.abs(r.y - b.y) < avgH * 0.5); if (r) r.items.push(b); else rows.push({y: b.y, items: [b]}); }
   return rows.flatMap(r => r.items.sort((a, b) => a.x - b.x));
 }
 function crop(img, bx) {
-  const ins = bx.whole ? 0 : 0.035;
-  const x = bx.x + bx.w * ins, y = bx.y + bx.h * ins, w = bx.w * (1 - 2 * ins), h = bx.h * (1 - 2 * ins);
-  const f = Math.min(1, 420 / Math.max(w, h));
-  const c = document.createElement('canvas'); c.width = Math.max(1, Math.round(w * f)); c.height = Math.max(1, Math.round(h * f));
-  c.getContext('2d').drawImage(img, x, y, w, h, 0, 0, c.width, c.height);
+  const c = document.createElement('canvas'), ctx = c.getContext('2d');
+  if (bx.whole) {
+    const f = Math.min(1, 560 / Math.max(bx.w, bx.h));
+    c.width = Math.max(1, Math.round(bx.w * f)); c.height = Math.max(1, Math.round(bx.h * f));
+    ctx.drawImage(img, 0, 0, bx.w, bx.h, 0, 0, c.width, c.height);
+  } else {
+    // schräg liegende Zettel gerade ausschneiden; 3,5 % Rand abschneiden
+    const ins = 0.035, w = bx.w * (1 - 2 * ins), h = bx.h * (1 - 2 * ins), f = Math.min(1, 560 / Math.max(w, h));
+    c.width = Math.max(1, Math.round(w * f)); c.height = Math.max(1, Math.round(h * f));
+    ctx.imageSmoothingQuality = 'high';
+    ctx.translate(c.width / 2, c.height / 2); ctx.scale(f, f); ctx.rotate(-(bx.a || 0));
+    ctx.drawImage(img, -bx.cx, -bx.cy);
+  }
   return {canvas: c, url: c.toDataURL('image/jpeg', 0.82)};
 }
 let cap = null;
@@ -861,7 +959,7 @@ function openCapture(img, boxes) {
 function drawCapBoxes() {
   const W0 = cap.img.naturalWidth, H0 = cap.img.naturalHeight, on = cap.boxes.filter(b => b.on).length;
   $('#capBoxes').innerHTML = cap.boxes.map((b, i) =>
-    `<button class="box${b.on ? '' : ' off'}" data-i="${i}" aria-pressed="${b.on}" aria-label="Zettel ${i + 1} ${b.on ? 'übernehmen' : 'auslassen'}" style="left:${b.x / W0 * 100}%;top:${b.y / H0 * 100}%;width:${b.w / W0 * 100}%;height:${b.h / H0 * 100}%"><b>${i + 1}</b></button>`).join('');
+    `<button class="box${b.on ? '' : ' off'}" data-i="${i}" aria-pressed="${b.on}" aria-label="Zettel ${i + 1} ${b.on ? 'übernehmen' : 'auslassen'}" style="left:${b.x / W0 * 100}%;top:${b.y / H0 * 100}%;width:${b.w / W0 * 100}%;height:${b.h / H0 * 100}%;transform:rotate(${(b.a || 0) * 180 / Math.PI}deg)"><b>${i + 1}</b></button>`).join('');
   if (cap.boxes.length) {
     $('#capInfo').textContent = `${cap.boxes.length} Zettel gefunden. Tippe auf einen Rahmen, um ihn auszulassen.`;
     $('#capOk').textContent = on === 1 ? '1 Zettel übernehmen' : `${on} Zettel übernehmen`;
@@ -880,11 +978,20 @@ $('#capOk').onclick = async () => {
   $('#capture').hidden = true; cap = null;
   const crops = sel.map(b => crop(img, b));
   URL.revokeObjectURL(img.src);
-  const b = board(), avg = sel.reduce((s, x) => s + Math.max(x.w, x.h), 0) / sel.length, sc = S * 1.14 / avg;
+  const b = board();
+  const sizes = sel.map(x => Math.sqrt(x.w * x.h)).sort((a, c) => a - c), med = sizes[Math.floor(sizes.length / 2)];
+  const sc = S / med;                                // mittlerer Zettel ≈ 180 Einheiten, Größenverhältnisse bleiben
+  const keep = x => x.whole ? 1 : 0.93;              // Zuschnitt schneidet 3,5 % je Rand ab
   const minX = Math.min(...sel.map(x => x.x)), minY = Math.min(...sel.map(x => x.y));
   let ox, oy;
   if (b.notes.length) { const bb = bounds(b.notes); ox = bb.x1 + 120; oy = bb.y0; } else { const c = viewCenter(); ox = c.x - S; oy = c.y - S; }
-  const added = sel.map((x, i) => ({id: uid(), x: Math.round(ox + (x.x - minX) * sc), y: Math.round(oy + (x.y - minY) * sc), c: x.c, t: '', ink: [], img: crops[i].url}));
+  let fw = 1, fh = 1;
+  if (sel.length === 1 && sel[0].whole) { const ar = sel[0].h / sel[0].w; fw = ar > 1 ? 1 / Math.sqrt(ar) : 1; fh = ar > 1 ? 1 : Math.sqrt(ar); }
+  const added = sel.map((x, i) => ({id: uid(),
+    x: Math.round(ox + (x.x - minX) * sc * 1.06), y: Math.round(oy + (x.y - minY) * sc * 1.06),
+    w: Math.round(clamp(sel[i].whole ? 260 * fw : x.w * keep(x) * sc, MINSZ, MAXSZ)),
+    h: Math.round(clamp(sel[i].whole ? 260 * fh : x.h * keep(x) * sc, MINSZ, MAXSZ)),
+    c: x.c, t: '', ink: [], img: crops[i].url}));
   b.notes.push(...added); changed(); render(); fitView();
   if (ocr) runOCR(added, i => new Promise(r => crops[i].canvas.toBlob(r, 'image/jpeg', 0.88)));
   else toast(added.length === 1 ? '1 Zettel übernommen' : `${added.length} Zettel übernommen`);
@@ -939,17 +1046,18 @@ async function boardPNG() {
   
   for (const n of b.notes) {
     ctx.save(); ctx.shadowColor = 'rgba(0,0,0,.18)'; ctx.shadowBlur = 10; ctx.shadowOffsetY = 4;
-    ctx.fillStyle = col(n.c).bg; ctx.fillRect(n.x, n.y, S, S); ctx.restore();
+    const W = NW(n), H = NH(n);
+    ctx.fillStyle = col(n.c).bg; ctx.fillRect(n.x, n.y, W, H); ctx.restore();
     if (n.img && !n.asText) {
       const im = await loadImg(n.img);
-      if (im) { const f = Math.max(S / im.width, S / im.height), w = im.width * f, h = im.height * f;
-        ctx.save(); ctx.beginPath(); ctx.rect(n.x, n.y, S, S); ctx.clip(); ctx.drawImage(im, n.x + (S - w) / 2, n.y + (S - h) / 2, w, h); ctx.restore(); }
+      if (im) { const f = Math.max(W / im.width, H / im.height), w = im.width * f, h = im.height * f;
+        ctx.save(); ctx.beginPath(); ctx.rect(n.x, n.y, W, H); ctx.clip(); ctx.drawImage(im, n.x + (W - w) / 2, n.y + (H - h) / 2, w, h); ctx.restore(); }
     } else if (n.t) {
-      const f = fs(n.t); ctx.font = `${f}px Noteworthy, "Marker Felt", "Bradley Hand", cursive`; ctx.fillStyle = '#1D1D1F'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-      const lines = wrapLines(ctx, n.t, S - 28), lh = f * 1.15, maxL = Math.floor((S - 20) / lh), shown = lines.slice(0, maxL);
-      shown.forEach((l, i) => ctx.fillText(l, n.x + S / 2, n.y + S / 2 + (i - (shown.length - 1) / 2) * lh));
+      const f = noteFont(n); ctx.font = `${f}px Noteworthy, "Marker Felt", "Bradley Hand", cursive`; ctx.fillStyle = '#1D1D1F'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      const lines = wrapLines(ctx, n.t, W - 28), lh = f * 1.15, maxL = Math.floor((H - 20) / lh), shown = lines.slice(0, maxL);
+      shown.forEach((l, i) => ctx.fillText(l, n.x + W / 2, n.y + H / 2 + (i - (shown.length - 1) / 2) * lh));
     }
-    if (n.ink && n.ink.length) { ctx.save(); ctx.translate(n.x, n.y); ctx.scale(S / 1000, S / 1000); n.ink.forEach(s => drawStroke(ctx, s)); ctx.restore(); }
+    if (n.ink && n.ink.length) { ctx.save(); ctx.beginPath(); ctx.rect(n.x, n.y, W, H); ctx.clip(); ctx.translate(n.x, n.y); ctx.scale(W / 1000, W / 1000); n.ink.forEach(s => drawStroke(ctx, s)); ctx.restore(); }
   }
   return c;
 }
@@ -1027,7 +1135,7 @@ document.addEventListener('keydown', e => {
   if (!$('#editor').hidden) return closeEditor();
   for (const id of ['#capture', '#drawer', '#preview']) if (!$(id).hidden) { if (id === '#capture') $('#capCancel').click(); else $(id).hidden = true; return; }
 });
-window.addEventListener('resize', () => { if (ed) { D = Math.round(Math.min(window.innerWidth * 0.8, window.innerHeight * 0.46, 440)); edNote.style.setProperty('--d', D + 'px'); edPaint(); } });
+window.addEventListener('resize', () => { if (ed) edPaint(); });
 
 /* ---------- start ---------- */
 async function init() {
