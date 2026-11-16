@@ -77,6 +77,19 @@ button{font-family:inherit}
 .note.dim{opacity:.2}
 .note .rh{position:absolute;right:0;bottom:0;width:34px;height:34px;cursor:nwse-resize;z-index:1;
   background:linear-gradient(135deg, transparent 58%, rgba(0,0,0,.30) 58%, rgba(0,0,0,.30) 63%, transparent 63%, transparent 72%, rgba(0,0,0,.30) 72%, rgba(0,0,0,.30) 77%, transparent 77%)}
+.note.sel{box-shadow:0 0 0 4px var(--accent), 0 10px 22px rgba(0,0,0,.22)}
+.note.sel::after{content:"✓";position:absolute;left:8px;top:8px;width:26px;height:26px;border-radius:50%;background:var(--accent);color:var(--accent-ink);
+  font:700 16px/26px var(--font-ui);text-align:center;z-index:2}
+body.selecting .note .rh{display:none}
+body.selecting .dock{display:none}
+#lasso{position:absolute;border:2px dashed var(--accent);background:color-mix(in srgb, var(--accent) 12%, transparent);border-radius:6px;pointer-events:none;z-index:3}
+#lasso[hidden]{display:none}
+.selbar{position:fixed;left:0;right:0;margin:0 auto;width:fit-content;bottom:max(16px, env(safe-area-inset-bottom));z-index:15;display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:center;
+  background:var(--chrome);border:1px solid var(--line);border-radius:16px;box-shadow:0 12px 34px rgba(0,0,0,.25);padding:8px 10px;max-width:calc(100% - 24px)}
+.selbar[hidden]{display:none}
+.selbar .count{font:700 14px/1 var(--font-ui);padding:0 6px;min-width:64px;font-variant-numeric:tabular-nums}
+.selbar .swatches{gap:6px}
+.selbar .swatches.off{opacity:.4;pointer-events:none}
 .note.resizing{box-shadow:0 0 0 3px var(--accent), var(--shadow)}
 .note.hit{box-shadow:0 0 0 4px var(--accent), var(--shadow)}
 #world.animate .note{transition:left .35s ease, top .35s ease}
@@ -187,6 +200,7 @@ button{font-family:inherit}
 
 <main id="board" aria-label="Zettelwand">
   <div id="world"></div>
+  <div id="lasso" hidden></div>
   <div class="empty" id="empty" hidden><p>Noch keine Notizen auf diesem Board. Lege mit „Notiz“ los oder fotografiere echte Post-its mit „Erfassen“.</p></div>
   <div class="dock">
     <button id="zoomOut" aria-label="Verkleinern">−</button>
@@ -195,6 +209,15 @@ button{font-family:inherit}
     <button class="fit" id="fitBtn">Alles zeigen</button>
   </div>
 </main>
+
+<div class="selbar" id="selbar" role="toolbar" aria-label="Mehrfachauswahl" hidden>
+  <span class="count" id="selCount" aria-live="polite">0 Zettel</span>
+  <button class="btn" id="selAll">Alle</button>
+  <div class="swatches" id="selColors" aria-label="Farbe der Auswahl"></div>
+  <button class="btn" id="selDup">Duplizieren</button>
+  <button class="btn danger" id="selDel">Löschen</button>
+  <button class="btn primary" id="selDone">Fertig</button>
+</div>
 
 <div class="modal" id="editor" hidden>
   <div class="sheet" role="dialog" aria-modal="true" aria-label="Notiz bearbeiten">
@@ -326,6 +349,7 @@ function sampleState() {
     n(424, 222, 'o', '„Ordnen“ sortiert nach Farbe oder im Raster'),
     n(4, 430, 'v', 'Speichert automatisch auf diesem Gerät'),
     n(424, 436, 'g', 'Ecke unten rechts ziehen ändert die Größe'),
+    n(-4, 640, 'p', 'Lange drücken: mehrere Zettel auswählen'),
     n(214, 420, 'b', 'Export als Bild, CSV oder Sicherung', [{c:'#1F4FBF', w:18, p:[740,130,790,190,890,70]}]),
   ]}]};
 }
@@ -407,6 +431,7 @@ function noteEl(n) {
   el.style.left = n.x + 'px'; el.style.top = n.y + 'px'; el.style.background = col(n.c).bg;
   el.style.width = NW(n) + 'px'; el.style.height = NH(n) + 'px';
   if (!matches(n)) el.classList.add('dim'); else if (search) el.classList.add('hit');
+  if (typeof sel !== 'undefined' && sel.has(n.id)) el.classList.add('sel');
   if (n.img && !n.asText) {
     const im = new Image(); im.src = n.img; im.alt = n.t || 'Erfasste Notiz'; im.draggable = false; el.appendChild(im);
   } else if (n.t) {
@@ -473,23 +498,42 @@ $('#fitBtn').onclick = fitView;
 $('#search').addEventListener('input', e => { search = e.target.value.trim().toLowerCase(); updateDim(); });
 
 /* ---------- board gestures ---------- */
-const ptrs = new Map(); let gesture = null;
+const ptrs = new Map(); let gesture = null, lpTimer = null;
+const LONGPRESS = 450;
 const rel = p => { const r = boardEl.getBoundingClientRect(); return {x: p.x - r.left, y: p.y - r.top}; };
+const toWorld = p => ({x: (p.x - view.x) / view.k, y: (p.y - view.y) / view.k});
+const noteNode = id => world.querySelector(`.note[data-id="${id}"]`);
 function startPinch() {
   const [a, b] = [...ptrs.values()].map(rel);
   gesture = {type: 'pinch', d0: Math.hypot(a.x - b.x, a.y - b.y) || 1, c0: {x: (a.x + b.x) / 2, y: (a.y + b.y) / 2}, k0: view.k, x0: view.x, y0: view.y};
 }
+function longPress() {
+  lpTimer = null;
+  const g = gesture; if (!g || g.moved || ptrs.size !== 1) return;
+  g.lp = true;
+  if (!selMode) enterSel();
+  if (g.id) { sel.add(g.id); g.type = 'group'; markSel(); }
+  else { g.type = 'lasso'; g.base = new Set(sel); }
+  try { navigator.vibrate && navigator.vibrate(12); } catch (_) {}
+}
+boardEl.addEventListener('contextmenu', e => e.preventDefault());
 boardEl.addEventListener('pointerdown', e => {
   if (e.button > 0 || e.target.closest('.dock')) return;
   ptrs.set(e.pointerId, {x: e.clientX, y: e.clientY});
   try { boardEl.setPointerCapture(e.pointerId); } catch (_) {}
   if (ptrs.size === 1) {
     const ne = e.target.closest('.note'), rh = e.target.closest('.rh');
-    gesture = {type: rh ? 'resize' : ne ? 'note' : 'pan', sx: e.clientX, sy: e.clientY, t: Date.now(), moved: false, vx: view.x, vy: view.y};
+    let type = ne ? 'note' : 'pan';
+    if (selMode) type = ne ? 'group' : 'lasso';
+    else if (rh) type = 'resize';
+    gesture = {type, sx: e.clientX, sy: e.clientY, t: Date.now(), moved: false, vx: view.x, vy: view.y, shift: e.shiftKey || e.metaKey};
     if (ne) { const n = findNote(ne.dataset.id); Object.assign(gesture, {id: n.id, nx: n.x, ny: n.y, w0: NW(n), h0: NH(n), el: ne}); }
+    if (type === 'lasso') gesture.base = new Set(sel);
+    if (!selMode && type !== 'resize') { clearTimeout(lpTimer); lpTimer = setTimeout(longPress, LONGPRESS); }
   } else if (ptrs.size === 2) {
-    if (gesture && (gesture.type === 'note' || gesture.type === 'resize')) {
-      gesture.el.classList.remove('dragging', 'resizing');
+    clearTimeout(lpTimer); lpTimer = null; hideLasso();
+    if (gesture && ['note', 'resize', 'group'].includes(gesture.type)) {
+      if (gesture.el) gesture.el.classList.remove('dragging', 'resizing');
       if (gesture.moved) changed();
     }
     startPinch();
@@ -508,6 +552,7 @@ boardEl.addEventListener('pointermove', e => {
   }
   const dx = e.clientX - gesture.sx, dy = e.clientY - gesture.sy;
   if (!gesture.moved && Math.hypot(dx, dy) < 7) return;
+  if (!gesture.moved) { clearTimeout(lpTimer); lpTimer = null; }
   if (gesture.type === 'resize') {
     const n = findNote(gesture.id); if (!n) return;
     if (!gesture.moved) { gesture.moved = true; gesture.el.classList.add('resizing'); }
@@ -522,6 +567,28 @@ boardEl.addEventListener('pointermove', e => {
     }
     n.x = Math.round(gesture.nx + dx / view.k); n.y = Math.round(gesture.ny + dy / view.k);
     gesture.el.style.left = n.x + 'px'; gesture.el.style.top = n.y + 'px';
+  } else if (gesture.type === 'group') {
+    if (!gesture.moved) {
+      gesture.moved = true;
+      if (!sel.has(gesture.id)) { sel.add(gesture.id); markSel(); }
+      const b = board(), moving = b.notes.filter(n => sel.has(n.id));
+      b.notes = b.notes.filter(n => !sel.has(n.id)).concat(moving);     // nach oben holen
+      gesture.start = moving.map(n => ({n, x: n.x, y: n.y, el: noteNode(n.id)}));
+      for (const s of gesture.start) if (s.el) { s.el.classList.add('dragging'); world.appendChild(s.el); }
+    }
+    for (const s of gesture.start) {
+      s.n.x = Math.round(s.x + dx / view.k); s.n.y = Math.round(s.y + dy / view.k);
+      if (s.el) { s.el.style.left = s.n.x + 'px'; s.el.style.top = s.n.y + 'px'; }
+    }
+  } else if (gesture.type === 'lasso') {
+    gesture.moved = true;
+    const a = rel({x: gesture.sx, y: gesture.sy}), c = rel({x: e.clientX, y: e.clientY});
+    const r = {x0: Math.min(a.x, c.x), y0: Math.min(a.y, c.y), x1: Math.max(a.x, c.x), y1: Math.max(a.y, c.y)};
+    showLasso(r);
+    const w0 = toWorld({x: r.x0, y: r.y0}), w1 = toWorld({x: r.x1, y: r.y1});
+    sel.clear(); for (const id of gesture.base) sel.add(id);
+    for (const n of board().notes) if (n.x < w1.x && n.x + NW(n) > w0.x && n.y < w1.y && n.y + NH(n) > w0.y) sel.add(n.id);
+    markSel();
   } else if (gesture.type === 'pan') {
     gesture.moved = true;
     view.x = gesture.vx + dx; view.y = gesture.vy + dy; applyView();
@@ -530,6 +597,7 @@ boardEl.addEventListener('pointermove', e => {
 function endPointer(e) {
   if (!ptrs.has(e.pointerId)) return;
   ptrs.delete(e.pointerId);
+  clearTimeout(lpTimer); lpTimer = null;
   if (!gesture) return;
   if (gesture.type === 'pinch') {
     if (ptrs.size === 1) {
@@ -540,10 +608,18 @@ function endPointer(e) {
   }
   if (ptrs.size > 0) return;
   const g = gesture; gesture = null;
+  const tap = e.type === 'pointerup' && !g.moved && !g.lp;
   if (g.type === 'note' || g.type === 'resize') {
     g.el.classList.remove('dragging', 'resizing');
     if (g.moved) changed();
-    else if (e.type === 'pointerup' && Date.now() - g.t < 700) openEditor(g.id);
+    else if (tap && g.shift) { enterSel(); sel.add(g.id); markSel(); }
+    else if (tap && Date.now() - g.t < 700) openEditor(g.id);
+  } else if (g.type === 'group') {
+    if (g.moved) { for (const s of g.start) if (s.el) s.el.classList.remove('dragging'); changed(); }
+    else if (tap) { if (sel.has(g.id)) sel.delete(g.id); else sel.add(g.id); markSel(); }
+  } else if (g.type === 'lasso') {
+    hideLasso();
+    if (tap) exitSel();                      // Tippen auf freie Fläche beendet die Auswahl
   } else if (g.type === 'pan') rememberView();
 }
 boardEl.addEventListener('pointerup', endPointer);
@@ -557,8 +633,53 @@ boardEl.addEventListener('wheel', e => {
 }, {passive: false});
 boardEl.addEventListener('keydown', e => {
   const ne = e.target.closest && e.target.closest('.note');
-  if (ne && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); openEditor(ne.dataset.id); }
+  if (ne && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); if (selMode) { const id = ne.dataset.id; sel.has(id) ? sel.delete(id) : sel.add(id); markSel(); } else openEditor(ne.dataset.id); }
 });
+
+/* ---------- Mehrfachauswahl ---------- */
+let selMode = false; const sel = new Set();
+const lassoEl = $('#lasso');
+function showLasso(r) { lassoEl.hidden = false; Object.assign(lassoEl.style, {left: r.x0 + 'px', top: r.y0 + 'px', width: (r.x1 - r.x0) + 'px', height: (r.y1 - r.y0) + 'px'}); }
+function hideLasso() { lassoEl.hidden = true; }
+function enterSel() {
+  if (selMode) return;
+  selMode = true; document.body.classList.add('selecting'); $('#selbar').hidden = false;
+  let seen = false; try { seen = localStorage.getItem('zw.selhint') === '1'; localStorage.setItem('zw.selhint', '1'); } catch (_) {}
+  if (!seen) toast('Weitere Zettel antippen oder auf freier Fläche einen Rahmen ziehen. Mit zwei Fingern verschieben und zoomen.');
+  markSel();
+}
+function exitSel() {
+  selMode = false; sel.clear(); document.body.classList.remove('selecting'); $('#selbar').hidden = true; hideLasso(); markSel();
+}
+function markSel() {
+  for (const el of world.children) el.classList.toggle('sel', sel.has(el.dataset.id));
+  const k = sel.size;
+  $('#selCount').textContent = k === 1 ? '1 Zettel' : `${k} Zettel`;
+  for (const id of ['#selDup', '#selDel']) $(id).disabled = k === 0;
+  $('#selColors').classList.toggle('off', k === 0);
+}
+function selectedNotes() { return board().notes.filter(n => sel.has(n.id)); }
+$('#selDone').onclick = exitSel;
+$('#selAll').onclick = () => { for (const n of board().notes) sel.add(n.id); markSel(); };
+$('#selColors').innerHTML = PALETTE.map(p => `<button class="sw small" data-c="${p.id}" style="background:${p.bg}" aria-label="Auswahl ${p.name} färben"></button>`).join('');
+$('#selColors').onclick = e => {
+  const b = e.target.closest('[data-c]'); if (!b || !sel.size) return;
+  for (const n of selectedNotes()) n.c = b.dataset.c;
+  changed(); render();
+};
+$('#selDel').onclick = () => {
+  const b = board(), before = b.notes.slice(), k = sel.size; if (!k) return;
+  b.notes = b.notes.filter(n => !sel.has(n.id)); sel.clear();
+  changed(); render(); markSel();
+  toast(k === 1 ? '1 Zettel gelöscht' : `${k} Zettel gelöscht`, {label: 'Rückgängig', run: () => { b.notes = before; changed(); render(); }});
+};
+$('#selDup').onclick = () => {
+  const src = selectedNotes(); if (!src.length) return;
+  const copies = src.map(n => { const c = JSON.parse(JSON.stringify(n)); c.id = uid(); c.x += 32; c.y += 32; return c; });
+  board().notes.push(...copies); sel.clear(); for (const c of copies) sel.add(c.id);
+  changed(); render();
+  toast(copies.length === 1 ? '1 Zettel dupliziert' : `${copies.length} Zettel dupliziert`);
+};
 
 /* ---------- toast & helpers ---------- */
 let toastT = null;
@@ -748,6 +869,7 @@ $('#edDup').onclick = () => {
   board().notes.push(c); changed(); render(); toast('Notiz dupliziert');
 };
 $('#addBtn').onclick = () => {
+  exitSel();
   const c = viewCenter(), j = () => Math.round((Math.random() - 0.5) * 60);
   const n = {id: uid(), x: Math.round(c.x - S / 2 + j()), y: Math.round(c.y - S / 2 + j()), c: lastColor, t: '', ink: []};
   board().notes.push(n); render(); openEditor(n.id, true);
@@ -760,7 +882,7 @@ function readingOrder(ns) {
   return rows.flatMap(r => r.items.sort((a, b) => a.x - b.x));
 }
 function arrange(kind) {
-  const b = board(), ns = b.notes; if (!ns.length) return;
+  const b = board(), only = selMode && sel.size > 1, ns = only ? b.notes.filter(n => sel.has(n.id)) : b.notes; if (!ns.length) return;
   const bb = bounds(ns);
   if (kind === 'color') {
     let cx = bb.x0;
@@ -785,7 +907,7 @@ function arrange(kind) {
   }
   world.classList.add('animate');
   for (const el of world.children) { const n = findNote(el.dataset.id); if (n) { el.style.left = n.x + 'px'; el.style.top = n.y + 'px'; } }
-  setTimeout(() => { world.classList.remove('animate'); fitView(); }, 380);
+  setTimeout(() => { world.classList.remove('animate'); if (!only) fitView(); }, 380);
   changed();
 }
 $('#arrBtn').onclick = e => openMenu(e.currentTarget, [
@@ -801,7 +923,7 @@ function renderDrawer() {
     const open = document.createElement('button'); open.className = 'open';
     open.textContent = b.name; const sm = document.createElement('small');
     sm.textContent = b.notes.length === 1 ? '1 Notiz' : b.notes.length + ' Notizen'; open.appendChild(sm);
-    open.onclick = () => { board().view = {...view}; state.current = b.id; stash(); $('#drawer').hidden = true; render(); if (b.view) { view = {...b.view}; applyView(); } else fitView(); };
+    open.onclick = () => { exitSel(); board().view = {...view}; state.current = b.id; stash(); $('#drawer').hidden = true; render(); if (b.view) { view = {...b.view}; applyView(); } else fitView(); };
     const ren = document.createElement('button'); ren.className = 'icon-btn'; ren.setAttribute('aria-label', 'Umbenennen: ' + b.name);
     ren.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M4 20h4L19 9l-4-4L4 16z"/></svg>';
     ren.onclick = () => {
@@ -1130,10 +1252,14 @@ $('#pvClose').onclick = () => { $('#preview').hidden = true; };
 
 /* ---------- keyboard ---------- */
 document.addEventListener('keydown', e => {
+  const typing = /^(INPUT|TEXTAREA)$/.test((e.target && e.target.tagName) || '');
+  if (selMode && !typing && (e.key === 'Delete' || e.key === 'Backspace') && $('#editor').hidden) { e.preventDefault(); return $('#selDel').click(); }
+  if (selMode && !typing && (e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'a') { e.preventDefault(); return $('#selAll').click(); }
   if (e.key !== 'Escape') return;
   if (menuEl) return closeMenu();
   if (!$('#editor').hidden) return closeEditor();
   for (const id of ['#capture', '#drawer', '#preview']) if (!$(id).hidden) { if (id === '#capture') $('#capCancel').click(); else $(id).hidden = true; return; }
+  if (selMode) exitSel();
 });
 window.addEventListener('resize', () => { if (ed) edPaint(); });
 
