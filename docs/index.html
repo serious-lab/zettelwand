@@ -274,7 +274,7 @@ body.selecting .dock{display:none}
   <div class="sheet drawer" role="dialog" aria-modal="true" aria-labelledby="drTitle">
     <div class="ed-head"><h2 id="drTitle">Boards</h2><button class="btn" id="drClose">Schließen</button></div>
     <ul id="boardList"></ul>
-    <button class="btn primary" id="newBoard">Neues Board</button>
+    <div class="ed-actions"><button class="btn" id="guideBtn">Anleitung anzeigen</button><button class="btn primary" id="newBoard">Neues Board</button></div>
   </div>
 </div>
 
@@ -311,7 +311,8 @@ const INK = ['#1D1D1F', '#1F4FBF', '#C62828', '#2E7D32'];
 const S = 180, GAP = 24, LS = 'zettelwand.v1';
 const MINSZ = 80, MAXSZ = 1200;
 const NW = n => n.w || S, NH = n => n.h || S;   // Zettelgröße in Board-Einheiten (alte Zettel: 180 × 180)
-const noteFont = n => fs(n.t) * Math.min(NW(n), NH(n)) / S;
+const noteScale = n => clamp(Math.sqrt(NW(n) * NH(n)) / S, 0.5, 3);
+const noteFont = n => fs(n.t) * noteScale(n);
 const uid = () => Math.random().toString(36).slice(2, 8) + Date.now().toString(36).slice(-5);
 const col = id => PALETTE.find(p => p.id === id) || PALETTE[0];
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
@@ -337,21 +338,94 @@ let ocrOK = !!VisionOCR, saveTimer = null;
 const boardEl = $('#board'), world = $('#world');
 
 /* ---------- data ---------- */
+/* ---------- Anleitungs-Board ---------- */
+const GUIDE_V = 3;   // erhöhen, wenn sich die Anleitung ändert: bestehende Installationen bekommen sie dann neu
+function guideNotes() {
+  const N = (x, y, c, t, o = {}) => ({id: uid(), x, y, c, t, ink: o.ink || [], ...(o.w ? {w: o.w} : {}), ...(o.h ? {h: o.h} : {})});
+  const H = (i, c, t) => N(i * 230, 170, c, t, {w: 200, h: 90});           // Spaltenüberschrift
+  const X = 230;                                                        // Spaltenabstand
+  const col = (i, c, items) => items.map((t, j) => typeof t === 'string'
+    ? N(i * X + 10, 290 + j * 200, c, t) : N(i * X + 10, 290 + j * 200, c, t.t, t));
+  const underline = [{c: '#C62828', w: 14, p: [150, 862, 300, 836, 450, 866, 600, 836, 750, 862, 860, 842]}];
+  const check = [{c: '#1F4FBF', w: 18, p: [740, 130, 790, 190, 890, 70]}];
+  const lasso = [{c: '#1F4FBF', w: 10, p: [120, 120, 880, 120, 880, 880, 120, 880, 120, 120]}];
+  return [
+    N(10, 0, 'y', 'Zettelwand – Anleitung', {w: 640, h: 140}),
+    N(700, 0, 'y', 'Dieses Board darfst du löschen. Du findest es jederzeit wieder unter ☰ → „Anleitung anzeigen“.', {w: 480, h: 140}),
+
+    H(0, 'y', 'Grundlagen'),
+    ...col(0, 'y', [
+      '„+ Notiz“ legt einen neuen Zettel an',
+      'Antippen öffnet den Zettel zum Bearbeiten',
+      'Ziehen verschiebt einen Zettel',
+      'Zwei Finger verschieben und zoomen das Board',
+      '„Alles zeigen“ unten rechts holt alle Zettel ins Bild',
+    ]),
+
+    H(1, 'p', 'Schreiben & Zeichnen'),
+    ...col(1, 'p', [
+      'Im Editor: Text, Stift oder Radierer wählen',
+      {t: 'Mit dem Apple Pencil direkt auf den Zettel schreiben', ink: underline},
+      'Stift: vier Farben, drei Strichstärken, „Rückgängig“',
+      'Zettelfarbe, Duplizieren und Löschen ebenfalls im Editor',
+    ]),
+
+    H(2, 'g', 'Größe & Format'),
+    ...col(2, 'g', [
+      'Ecke unten rechts ziehen ändert die Größe',
+      {t: 'Im Editor: Quadrat, Hoch oder Quer', w: 140, h: 230},
+      'Im Editor: „Kleiner“ und „Größer“',
+    ]).map((n, j) => j === 2 ? {...n, y: n.y + 60} : n),
+
+    H(3, 'b', 'Mehrfachauswahl'),
+    ...col(3, 'b', [
+      {t: 'Lange auf einen Zettel drücken startet die Auswahl', ink: check},
+      'Weitere Zettel antippen: hinzufügen oder abwählen',
+      {t: 'Lasso: auf freier Fläche einen Rahmen ziehen', ink: lasso},
+      'Einen ausgewählten Zettel ziehen: alle wandern mit',
+      'Leiste unten: Alle, Farbe, Duplizieren, Löschen',
+      '„Fertig“ oder freie Fläche antippen beendet die Auswahl',
+    ]),
+
+    H(4, 'o', 'Post-its erfassen'),
+    ...col(4, 'o', [
+      '„Erfassen“: echte Post-its fotografieren',
+      'Jeder Zettel wird einzeln übernommen',
+      'Rechteckige und schräge Zettel werden erkannt und gerade ausgeschnitten',
+      'In der Vorschau einen Rahmen antippen, um ihn auszulassen',
+      'Tipp: kräftige Farben auf hellem, ruhigem Untergrund',
+    ]),
+
+    H(5, 'v', 'Ordnen & Finden'),
+    ...col(5, 'v', [
+      '„Ordnen“: nach Farbe oder im Raster',
+      'Bei aktiver Auswahl ordnet „Ordnen“ nur die Auswahl',
+      'Suche oben: passende Zettel werden hervorgehoben',
+      '☰ oben links: Boards anlegen, wechseln, umbenennen',
+    ]),
+
+    H(6, 'y', 'Sichern & Teilen'),
+    ...col(6, 'y', [
+      'Alles bleibt nur auf diesem Gerät',
+      'Export → „Alle Boards sichern“, z. B. in iCloud Drive',
+      'Export → Bild, Tabelle (CSV) oder Texte kopieren',
+      'Export → „Sicherung laden“ auf einem anderen iPad',
+      '„Gespeichert“ oben rechts antippen zeigt die letzte Sicherung',
+    ]),
+  ];
+}
+const guideBoard = () => ({id: uid(), name: 'Anleitung', guide: true, notes: guideNotes()});
 function sampleState() {
-  const n = (x, y, c, t, ink) => ({id: uid(), x, y, c, t, ink: ink || []});
-  const id = uid();
-  return {v: 1, savedAt: 0, current: id, boards: [{id, name: 'Beispiel-Board', notes: [
-    n(0, 0, 'y', 'Willkommen auf deiner Zettelwand!'),
-    n(210, -12, 'y', 'Tippe auf eine Notiz, um sie zu bearbeiten'),
-    n(420, 8, 'p', 'Mit dem Apple Pencil direkt auf den Zettel schreiben', [{c:'#C62828', w:14, p:[150,862,300,836,450,866,600,836,750,862,860,842]}]),
-    n(-6, 214, 'g', '„Erfassen“: echte Post-its fotografieren und einzeln übernehmen'),
-    n(206, 204, 'b', 'Ziehen verschiebt, zwei Finger zoomen'),
-    n(424, 222, 'o', '„Ordnen“ sortiert nach Farbe oder im Raster'),
-    n(4, 430, 'v', 'Speichert automatisch auf diesem Gerät'),
-    n(424, 436, 'g', 'Ecke unten rechts ziehen ändert die Größe'),
-    n(-4, 640, 'p', 'Lange drücken: mehrere Zettel auswählen'),
-    n(214, 420, 'b', 'Export als Bild, CSV oder Sicherung', [{c:'#1F4FBF', w:18, p:[740,130,790,190,890,70]}]),
-  ]}]};
+  const b = guideBoard();
+  return {v: 1, savedAt: 0, guideV: GUIDE_V, current: b.id, boards: [b]};
+}
+function ensureGuide(open) {
+  let g = state.boards.find(b => b.guide);
+  if (!g) { g = guideBoard(); state.boards.push(g); }
+  else { g.notes = guideNotes(); delete g.view; }
+  state.guideV = GUIDE_V;
+  if (open) state.current = g.id;
+  return g;
 }
 const board = () => state.boards.find(b => b.id === state.current) || state.boards[0];
 const findNote = id => board().notes.find(n => n.id === id);
@@ -375,6 +449,7 @@ const IDB = {
     return new Promise((res, rej) => { const tx = db.transaction('kv', 'readwrite'); tx.objectStore('kv').put(v, k); tx.oncomplete = () => res(); tx.onerror = () => rej(tx.error); });
   }
 };
+let guideUpdated = false;
 async function load() {
   let s = null;
   const withTimeout = (pr, ms) => Promise.race([pr, new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), ms))]);
@@ -382,6 +457,7 @@ async function load() {
   if (!s) { try { const t = localStorage.getItem(LS); if (t) s = JSON.parse(t); } catch (e) {} }
   if (!s || !Array.isArray(s.boards) || !s.boards.length) s = sampleState();
   state = s;
+  if ((state.guideV || 0) < GUIDE_V) { ensureGuide(false); guideUpdated = true; }
   if (!state.boards.some(b => b.id === state.current)) state.current = state.boards[0].id;
   try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist(); } catch (e) {}
 }
@@ -766,7 +842,7 @@ function edLayout() {
   const f = ar > 1.15 ? 'hi' : ar < 1 / 1.15 ? 'qu' : 'sq';
   for (const b of document.querySelectorAll('#fmtSeg button')) b.setAttribute('aria-pressed', String(b.dataset.f === f));
 }
-function edFont() { edText.style.fontSize = (fs(edText.value) * Math.min(NW(ed.n), NH(ed.n)) / S * edR) + 'px'; }
+function edFont() { edText.style.fontSize = (fs(edText.value) * noteScale(ed.n) * edR) + 'px'; }
 function edPaint() {
   edLayout();
   const n = ed.n, showImg = n.img && !n.asText;
@@ -948,6 +1024,10 @@ function renderDrawer() {
 $('#boardBtn').onclick = () => { renderDrawer(); $('#drawer').hidden = false; };
 $('#drClose').onclick = () => { $('#drawer').hidden = true; };
 $('#drawer').addEventListener('pointerdown', e => { if (e.target.id === 'drawer') $('#drawer').hidden = true; });
+$('#guideBtn').onclick = () => {
+  exitSel(); board().view = {...view};
+  ensureGuide(true); changed(); $('#drawer').hidden = true; render(); fitView();
+};
 $('#newBoard').onclick = () => {
   board().view = {...view};
   const b = {id: uid(), name: 'Board ' + (state.boards.length + 1), notes: []};
@@ -1271,6 +1351,12 @@ async function init() {
   const b = board();
   if (b.view) { view = {...b.view}; applyView(); } else fitView();
   setStatus('saved');
+  if (guideUpdated) {
+    changed();
+    toast('Neu: Mehrfachauswahl, Größe ändern und mehr. Alles steht im Board „Anleitung“.', {label: 'Öffnen', run: () => {
+      exitSel(); board().view = {...view}; state.current = state.boards.find(b => b.guide).id; changed(); render(); fitView();
+    }});
+  }
   if ('serviceWorker' in navigator && location.protocol === 'https:' && !NATIVE) navigator.serviceWorker.register('sw.js').catch(() => {});
 }
 init();

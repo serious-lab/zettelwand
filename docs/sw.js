@@ -1,5 +1,5 @@
 /* Zettelwand – Offline-Cache. Nach jeder Änderung an der App VERSION erhöhen. */
-const VERSION = 'zettelwand-v3';
+const VERSION = 'zettelwand-v4';
 const ASSETS = ['./', './index.html', './manifest.webmanifest', './datenschutz.html',
   './icons/icon-192.png', './icons/icon-512.png', './icons/apple-touch-icon.png'];
 
